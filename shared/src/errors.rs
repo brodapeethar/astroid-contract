@@ -45,6 +45,7 @@ pub enum Error {
     WalletArchived = 51,
     WalletPaused = 52,
     InvalidState = 53,
+    UnauthorizedDispatch = 54,
 
     // --- Multisig / approvals (60-69) ---
     InvalidSignature = 60,
