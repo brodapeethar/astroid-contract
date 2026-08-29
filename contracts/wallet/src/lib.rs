@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 //! # Astroid Wallet Contract
 //!
 //! Programmable, stateful custody wallets for AI agents. The contract is the
@@ -125,6 +126,13 @@ impl WalletContract {
         env.storage().instance().set(&DataKey::WalletCount, &count);
         Self::bump_instance(&env);
         events::wallet_created(&env, id, &owner);
+        events::publish(
+            &env,
+            events::ContractEvent::WalletCreated {
+                wallet_id: id,
+                owner: owner.clone(),
+            },
+        );
         Ok(id)
     }
 
@@ -215,6 +223,13 @@ impl WalletContract {
         wallet.state = ResourceState::Frozen;
         Self::store_wallet(&env, wallet_id, &wallet);
         events::wallet_frozen(&env, wallet_id, &caller);
+        events::publish(
+            &env,
+            events::ContractEvent::WalletStateChanged {
+                wallet_id,
+                state: symbol_short!("frozen"),
+            },
+        );
         Ok(())
     }
 
@@ -525,7 +540,15 @@ impl WalletContract {
     }
 
     fn emit_state(env: &Env, id: u64, action: soroban_sdk::Symbol) {
-        env.events().publish((symbol_short!("wallet"), action), id);
+        env.events()
+            .publish((symbol_short!("wallet"), action.clone()), id);
+        events::publish(
+            env,
+            events::ContractEvent::WalletStateChanged {
+                wallet_id: id,
+                state: action,
+            },
+        );
     }
 
     fn bump_wallet(env: &Env, id: u64) {

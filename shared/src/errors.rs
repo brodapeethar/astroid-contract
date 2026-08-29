@@ -39,6 +39,7 @@ pub enum Error {
     BudgetFrozen = 41,
     BudgetArchived = 42,
     AssetNotAuthorized = 43,
+    BudgetExpired = 44,
 
     // --- Wallet (50-59) ---
     WalletFrozen = 50,
@@ -55,6 +56,14 @@ pub enum Error {
     InvalidThreshold = 64,
     TimeLocked = 65,
     TooManySigners = 66,
+    /// A sub-call within a batch failed; the entire batch reverted atomically.
+    BatchCallFailed = 67,
+    /// Batch nonce is not strictly greater than the last used nonce (replay).
+    InvalidNonce = 68,
+    /// A signer with zero (or otherwise invalid) voting weight was supplied.
+    InvalidSignerWeight = 69,
+    /// Accumulated approval weight is below the configured threshold.
+    InsufficientWeight = 90,
 
     // --- Proposal (70-79) ---
     ProposalExpired = 70,

@@ -48,3 +48,14 @@ pub enum ModuleKind {
 pub struct OrgRef {
     pub org: String,
 }
+
+/// A single leg of a batch payout: how much to send to whom. The asset is
+/// carried once by the enclosing call rather than repeated per recipient, so a
+/// batch always disburses a single asset and the payout total can be checked
+/// against one holding.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Payment {
+    pub recipient: Address,
+    pub amount: i128,
+}

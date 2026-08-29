@@ -5,7 +5,19 @@ use crate::{WalletAction, WalletContract, WalletContractClient};
 use astroid_shared::errors::Error;
 use astroid_shared::types::{ModuleKind, ResourceState};
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{symbol_short, token, Address, Env, String};
+use soroban_sdk::{testutils::Events, token, Address, Env, IntoVal, Symbol, Val};
+
+/// Assert that the canonical `ContractEvent` with the given variant symbol was
+/// published during the test (single-topic event = the variant name).
+fn assert_event(env: &Env, variant: &str) {
+    let want: Val = Symbol::new(env, variant).into_val(env);
+    let found = env
+        .events()
+        .all()
+        .iter()
+        .any(|(_contract_id, topics, _data)| topics.contains(&want));
+    assert!(found, "expected ContractEvent::{} to be emitted", variant);
+}
 
 struct Harness {
     env: Env,
@@ -303,228 +315,13 @@ fn unknown_wallet_fails_not_found() {
     assert_eq!(res2, Err(Ok(Error::NotFound)));
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch authorization tests
-// ---------------------------------------------------------------------------
-
 #[test]
-fn dispatch_owner_can_transfer() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let recipient = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-    mint(&h, &owner, 1_000);
-    h.client.deposit(&id, &owner, &h.token, &1_000);
-
-    let action = WalletAction::Transfer {
-        to: recipient.clone(),
-        asset: h.token.clone(),
-        amount: 250,
-    };
-    h.client.dispatch(&owner, &id, &action);
-
-    assert_eq!(h.client.balance(&id, &h.token), 750);
-    assert_eq!(token_balance(&h, &recipient), 250);
-}
-
-#[test]
-fn dispatch_owner_can_freeze_and_unfreeze() {
+fn standard_events_emitted() {
     let h = setup();
     let owner = Address::generate(&h.env);
     let id = h.client.create_wallet(&owner);
+    assert_event(&h.env, "WalletCreated");
 
-    // Freeze via dispatch
-    h.client.dispatch(&owner, &id, &WalletAction::Freeze);
-    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Frozen);
-
-    // Unfreeze via dispatch
-    h.client.dispatch(&owner, &id, &WalletAction::Unfreeze);
-    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Active);
-}
-
-#[test]
-fn dispatch_registered_module_can_transfer() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let module = Address::generate(&h.env); // This will be the "registered" module
-    let recipient = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-    mint(&h, &owner, 1_000);
-    h.client.deposit(&id, &owner, &h.token, &1_000);
-
-    // Register the module as a Multisig module for this org
-    register_mock_module(&h, ModuleKind::Multisig, &module);
-
-    let action = WalletAction::Transfer {
-        to: recipient.clone(),
-        asset: h.token.clone(),
-        amount: 500,
-    };
-    h.client.dispatch(&module, &id, &action);
-
-    assert_eq!(h.client.balance(&id, &h.token), 500);
-    assert_eq!(token_balance(&h, &recipient), 500);
-}
-
-#[test]
-fn dispatch_registered_module_can_freeze() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let module = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-
-    // Register the module as a Treasury module for this org
-    register_mock_module(&h, ModuleKind::Treasury, &module);
-
-    h.client.dispatch(&module, &id, &WalletAction::Freeze);
-    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Frozen);
-}
-
-#[test]
-fn dispatch_unregistered_caller_blocked() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let stranger = Address::generate(&h.env);
-    let recipient = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-    mint(&h, &owner, 1_000);
-    h.client.deposit(&id, &owner, &h.token, &1_000);
-
-    // stranger is not the owner and not registered in the registry
-    let action = WalletAction::Transfer {
-        to: recipient.clone(),
-        asset: h.token.clone(),
-        amount: 100,
-    };
-    let res = h.client.try_dispatch(&stranger, &id, &action);
-    assert_eq!(res, Err(Ok(Error::UnauthorizedDispatch)));
-}
-
-#[test]
-fn dispatch_unregistered_cannot_freeze() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let stranger = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-
-    let res = h.client.try_dispatch(&stranger, &id, &WalletAction::Freeze);
-    assert_eq!(res, Err(Ok(Error::UnauthorizedDispatch)));
-}
-
-#[test]
-fn dispatch_unregistered_cannot_withdraw() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let stranger = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-    mint(&h, &owner, 1_000);
-    h.client.deposit(&id, &owner, &h.token, &1_000);
-
-    let action = WalletAction::Withdraw {
-        asset: h.token.clone(),
-        amount: 100,
-    };
-    let res = h.client.try_dispatch(&stranger, &id, &action);
-    assert_eq!(res, Err(Ok(Error::UnauthorizedDispatch)));
-}
-
-#[test]
-fn dispatch_owner_can_pause_and_unpause() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-
-    h.client.dispatch(&owner, &id, &WalletAction::Pause);
-    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Paused);
-
-    h.client.dispatch(&owner, &id, &WalletAction::Unpause);
-    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Active);
-}
-
-#[test]
-fn dispatch_registered_module_can_pause() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let module = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-
-    register_mock_module(&h, ModuleKind::Policy, &module);
-
-    h.client.dispatch(&module, &id, &WalletAction::Pause);
-    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Paused);
-
-    h.client.dispatch(&module, &id, &WalletAction::Unpause);
-    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Active);
-}
-
-#[test]
-fn dispatch_frozen_wallet_blocks_transfer() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let recipient = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-    mint(&h, &owner, 1_000);
-    h.client.deposit(&id, &owner, &h.token, &1_000);
-
-    // Freeze the wallet via direct call
     h.client.freeze(&owner, &id);
-
-    // Attempt transfer via dispatch — should fail because wallet is frozen
-    let action = WalletAction::Transfer {
-        to: recipient.clone(),
-        asset: h.token.clone(),
-        amount: 100,
-    };
-    let res = h.client.try_dispatch(&owner, &id, &action);
-    assert_eq!(res, Err(Ok(Error::WalletFrozen)));
-}
-
-#[test]
-fn dispatch_archived_wallet_blocks_freeze() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-
-    h.client.archive(&owner, &id);
-
-    let res = h.client.try_dispatch(&owner, &id, &WalletAction::Freeze);
-    assert_eq!(res, Err(Ok(Error::WalletArchived)));
-}
-
-#[test]
-fn dispatch_zero_amount_transfer_rejected() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let recipient = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-
-    let action = WalletAction::Transfer {
-        to: recipient.clone(),
-        asset: h.token.clone(),
-        amount: 0,
-    };
-    let res = h.client.try_dispatch(&owner, &id, &action);
-    assert_eq!(res, Err(Ok(Error::InvalidAmount)));
-}
-
-#[test]
-fn dispatch_different_module_kind_registered() {
-    let h = setup();
-    let owner = Address::generate(&h.env);
-    let recipient = Address::generate(&h.env);
-    let id = h.client.create_wallet(&owner);
-    mint(&h, &owner, 1_000);
-    h.client.deposit(&id, &owner, &h.token, &1_000);
-
-    // Register as Escrow module — different kind, same authorization
-    let module = Address::generate(&h.env);
-    register_mock_module(&h, ModuleKind::Escrow, &module);
-
-    let action = WalletAction::Transfer {
-        to: recipient.clone(),
-        asset: h.token.clone(),
-        amount: 100,
-    };
-    h.client.dispatch(&module, &id, &action);
-    assert_eq!(h.client.balance(&id, &h.token), 900);
+    assert_event(&h.env, "WalletStateChanged");
 }

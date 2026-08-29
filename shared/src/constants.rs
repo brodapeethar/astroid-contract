@@ -25,3 +25,11 @@ pub const MIN_THRESHOLD: u32 = 1;
 
 /// Upper bound on how many eligible approvers a proposal may declare.
 pub const MAX_APPROVERS: u32 = 32;
+
+/// Upper bound on how many discrete calls a single batch may contain (gas safety).
+pub const MAX_BATCH_CALLS: u32 = 16;
+
+/// Upper bound on how many recipients a single batch payment may pay out to.
+/// Batches are executed atomically, so this caps the worst-case cost of one
+/// invocation (and therefore the cost of the revert when a leg fails).
+pub const MAX_BATCH_PAYMENTS: u32 = 32;

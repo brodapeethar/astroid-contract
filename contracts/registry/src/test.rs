@@ -5,7 +5,19 @@ use crate::{RegistryContract, RegistryContractClient};
 use astroid_shared::errors::Error;
 use astroid_shared::types::ModuleKind;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, Env, String};
+use soroban_sdk::{testutils::Events, Address, Env, IntoVal, String, Symbol, Val};
+
+/// Assert that the canonical `ContractEvent` with the given variant symbol was
+/// published during the test (single-topic event = the variant name).
+fn assert_event(env: &Env, variant: &str) {
+    let want: Val = Symbol::new(env, variant).into_val(env);
+    let found = env
+        .events()
+        .all()
+        .iter()
+        .any(|(_contract_id, topics, _data)| topics.contains(&want));
+    assert!(found, "expected ContractEvent::{} to be emitted", variant);
+}
 
 fn setup() -> (Env, RegistryContractClient<'static>, Address) {
     let env = Env::default();
@@ -151,4 +163,23 @@ fn admin_rotation() {
         client.try_register_org(&admin, &org, &owner),
         Err(Ok(Error::Unauthorized))
     );
+}
+
+#[test]
+fn standard_events_emitted() {
+    let (env, client, admin) = setup();
+    let org = String::from_str(&env, "acme");
+    let owner = Address::generate(&env);
+    client.register_org(&admin, &org, &owner);
+
+    let wallet = Address::generate(&env);
+    client.register_module(&owner, &org, &ModuleKind::Wallet, &wallet);
+    assert_event(&env, "RegistryModuleUpdated");
+
+    let new_owner = Address::generate(&env);
+    client.set_org_owner(&owner, &org, &new_owner);
+    assert_event(&env, "OrgOwnerChanged");
+
+    client.freeze(&new_owner, &org);
+    assert_event(&env, "RegistryFrozen");
 }
