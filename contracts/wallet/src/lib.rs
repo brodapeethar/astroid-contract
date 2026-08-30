@@ -58,16 +58,15 @@
 //! plus wallet-scoped state-change and role-administration events.
 
 use crate::access::Role;
+use astroid_interfaces::RegistryClient;
 use astroid_shared::constants::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
 use astroid_shared::ensure;
 use astroid_shared::errors::Error;
 use astroid_shared::math::{SafeAdd, SafeSub};
-use astroid_shared::types::ResourceState;
+use astroid_shared::types::{ModuleKind, ResourceState};
 use astroid_shared::validation::require_positive_amount;
 use astroid_shared::{constants, events};
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Symbol};
 
 pub mod access;
 
@@ -86,6 +85,28 @@ enum DataKey {
     Wallet(u64),
     /// Per-wallet, per-asset balance: (id, asset) -> i128.
     Balance(u64, Address),
+    /// Registry contract address for caller verification (instance).
+    Registry,
+    /// Organization slug this wallet belongs to (instance).
+    Org,
+}
+
+/// A wallet dispatch action that an authorized module or signer may execute.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WalletAction {
+    /// Transfer `amount` of `asset` to `to`.
+    Transfer(Address, Address, i128),
+    /// Withdraw `amount` of `asset` back to the wallet owner.
+    Withdraw(Address, i128),
+    /// Freeze the wallet, blocking all outbound movement.
+    Freeze,
+    /// Unfreeze the wallet back to Active.
+    Unfreeze,
+    /// Pause the wallet temporarily.
+    Pause,
+    /// Resume a paused wallet.
+    Unpause,
 }
 
 /// Stored wallet record. `owner` controls the wallet; `state` gates operations.
@@ -101,8 +122,14 @@ pub struct WalletContract;
 
 #[contractimpl]
 impl WalletContract {
-    /// Initialize the contract with an emergency admin (may freeze wallets).
-    pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
+    /// Initialize the contract with an emergency admin, registry address, and
+    /// organization slug. Callable once.
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        registry: Address,
+        org: String,
+    ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
         }
@@ -111,6 +138,8 @@ impl WalletContract {
         env.storage().instance().set(&DataKey::Guardian, &admin);
         env.storage().instance().set(&DataKey::WalletCount, &0u64);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().set(&DataKey::Registry, &registry);
+        env.storage().instance().set(&DataKey::Org, &org);
         Self::bump_instance(&env);
         Ok(())
     }
@@ -236,7 +265,6 @@ impl WalletContract {
     ) -> Result<(), Error> {
         require_positive_amount(amount)?;
         Self::when_not_paused(&env)?;
-        let wallet = Self::require_owner(&env, wallet_id, &caller)?;
         let wallet = Self::require_wallet_role(&env, wallet_id, &caller, Role::Agent)?;
         Self::require_active(&wallet)?;
         Self::debit(&env, wallet_id, &asset, amount)?;
@@ -263,7 +291,6 @@ impl WalletContract {
     ) -> Result<(), Error> {
         require_positive_amount(amount)?;
         Self::when_not_paused(&env)?;
-        let wallet = Self::require_owner(&env, wallet_id, &caller)?;
         let wallet = Self::require_wallet_role(&env, wallet_id, &caller, Role::Admin)?;
         Self::require_active(&wallet)?;
         Self::debit(&env, wallet_id, &asset, amount)?;
@@ -550,6 +577,146 @@ impl WalletContract {
             wallet.state != ResourceState::Archived,
             Error::WalletArchived
         );
+        Ok(())
+    }
+
+    /// Verify that `caller` is authorized to dispatch operations on this wallet.
+    ///
+    /// Authorization succeeds when **any** of the following hold:
+    /// 1. `caller` is the wallet's registered owner.
+    /// 2. `caller` is the contract-level admin.
+    /// 3. `caller` is a registered module address for this wallet's organization
+    ///    in the on-chain registry.
+    ///
+    /// Returns [`Error::UnauthorizedDispatch`] when none of the above apply.
+    fn require_registered_caller(
+        env: &Env,
+        caller: &Address,
+        wallet_id: u64,
+    ) -> Result<(), Error> {
+        // Fast path: owner or admin — no cross-contract call needed.
+        let wallet = Self::load_wallet(env, wallet_id)?;
+        let is_owner = wallet.owner == *caller;
+        let admin: Option<Address> = env.storage().instance().get(&DataKey::Admin);
+        let is_admin = admin.map(|a| &a == caller).unwrap_or(false);
+
+        if is_owner || is_admin {
+            return Ok(());
+        }
+
+        // Registry path: verify caller is a registered module for this org.
+        let registry_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Registry)
+            .ok_or(Error::NotInitialized)?;
+        let org: String = env
+            .storage()
+            .instance()
+            .get(&DataKey::Org)
+            .ok_or(Error::NotInitialized)?;
+
+        let registry = RegistryClient::new(env, &registry_addr);
+
+        // Try each known module kind — if the caller is registered as ANY
+        // module for this org, it is authorized to dispatch wallet operations.
+        let module_kinds = [
+            ModuleKind::Multisig,
+            ModuleKind::Treasury,
+            ModuleKind::Policy,
+            ModuleKind::Budget,
+            ModuleKind::Proposal,
+            ModuleKind::Escrow,
+        ];
+
+        for kind in module_kinds.iter() {
+            match registry.try_lookup(&org.clone(), kind) {
+                Ok(Ok(addr)) if addr == *caller => return Ok(()),
+                _ => continue,
+            }
+        }
+
+        Err(Error::UnauthorizedDispatch)
+    }
+
+    /// Execute a dispatch action against the specified wallet. The caller has
+    /// already been authorized by [`Self::require_registered_caller`].
+    fn execute_dispatch(
+        env: &Env,
+        wallet_id: u64,
+        action: &WalletAction,
+    ) -> Result<(), Error> {
+        match action {
+            WalletAction::Transfer(to, asset, amount) => {
+                require_positive_amount(*amount)?;
+                let wallet = Self::load_wallet(env, wallet_id)?;
+                Self::require_active(&wallet)?;
+                Self::debit(env, wallet_id, asset, *amount)?;
+                token::TokenClient::new(env, asset).transfer(
+                    &env.current_contract_address(),
+                    to,
+                    amount,
+                );
+                events::transfer_executed(
+                    env,
+                    &env.current_contract_address(),
+                    to,
+                    asset,
+                    *amount,
+                );
+            }
+            WalletAction::Withdraw(asset, amount) => {
+                require_positive_amount(*amount)?;
+                let wallet = Self::load_wallet(env, wallet_id)?;
+                Self::require_active(&wallet)?;
+                Self::debit(env, wallet_id, asset, *amount)?;
+                token::TokenClient::new(env, asset).transfer(
+                    &env.current_contract_address(),
+                    &wallet.owner,
+                    amount,
+                );
+                env.events().publish(
+                    (symbol_short!("wallet"), symbol_short!("withdraw")),
+                    (wallet_id, asset, *amount),
+                );
+            }
+            WalletAction::Freeze => {
+                let mut wallet = Self::load_wallet(env, wallet_id)?;
+                if wallet.state == ResourceState::Archived {
+                    return Err(Error::WalletArchived);
+                }
+                wallet.state = ResourceState::Frozen;
+                Self::store_wallet(env, wallet_id, &wallet);
+                events::wallet_frozen(env, wallet_id, &env.current_contract_address());
+            }
+            WalletAction::Unfreeze => {
+                let mut wallet = Self::load_wallet(env, wallet_id)?;
+                if wallet.state != ResourceState::Frozen {
+                    return Err(Error::InvalidState);
+                }
+                wallet.state = ResourceState::Active;
+                Self::store_wallet(env, wallet_id, &wallet);
+                Self::emit_state(env, wallet_id, symbol_short!("unfrozen"));
+            }
+            WalletAction::Pause => {
+                let mut wallet = Self::load_wallet(env, wallet_id)?;
+                if wallet.state != ResourceState::Active {
+                    return Err(Error::InvalidState);
+                }
+                wallet.state = ResourceState::Paused;
+                Self::store_wallet(env, wallet_id, &wallet);
+                Self::emit_state(env, wallet_id, symbol_short!("paused"));
+            }
+            WalletAction::Unpause => {
+                let mut wallet = Self::load_wallet(env, wallet_id)?;
+                if wallet.state != ResourceState::Paused {
+                    return Err(Error::InvalidState);
+                }
+                wallet.state = ResourceState::Active;
+                Self::store_wallet(env, wallet_id, &wallet);
+                Self::emit_state(env, wallet_id, symbol_short!("unpaused"));
+            }
+        }
         Ok(())
     }
 

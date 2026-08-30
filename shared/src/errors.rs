@@ -24,14 +24,13 @@ pub enum Error {
     Overflow = 11,
     InvalidAmount = 12,
 
-    // --- Policy (20-27) ---
+    // --- Policy (20-25) ---
     PolicyDenied = 20,
     EmergencyLock = 21,
     PolicyRecipientRestricted = 22,
     PolicyMerchantBlocked = 23,
     PolicyCategoryRestricted = 24,
     AssetNotWhitelisted = 25,
-    PolicyPaused = 26,
 
     // --- Registry (30-39) ---
     RegistryFrozen = 30,
@@ -39,7 +38,6 @@ pub enum Error {
 
     // --- Budget (40-44) ---
     BudgetExceeded = 40,
-    BudgetFrozen = 41,
     BudgetArchived = 42,
     AssetNotAuthorized = 43,
     BudgetExpired = 44,
@@ -49,6 +47,7 @@ pub enum Error {
     WalletArchived = 51,
     WalletPaused = 52,
     InvalidState = 53,
+    UnauthorizedDispatch = 54,
 
     // --- Multisig / approvals (61-69) ---
     ThresholdNotMet = 61,
@@ -70,9 +69,6 @@ pub enum Error {
     /// A caller without governance rights attempted to modify signers,
     /// weights or the threshold.
     UnauthorizedModification = 92,
-    InvalidNonce = 67,
-    BatchCallFailed = 68,
-    InsufficientWeight = 69,
 
     // --- Proposal (71-79) ---
     ProposalExpired = 71,
@@ -80,8 +76,6 @@ pub enum Error {
     ProposalNotApproved = 73,
     NotAnApprover = 74,
     CancellationWindowClosed = 75,
-    MathOverflow = 76,
-    DivisionByZero = 77,
     /// A prerequisite proposal has not executed, so the dependent proposal may
     /// not execute yet.
     PrerequisiteNotMet = 78,

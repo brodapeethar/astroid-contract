@@ -32,28 +32,25 @@ pub trait SafeDiv {
 
 impl SafeAdd for i128 {
     fn safe_add(self, other: i128) -> Result<i128, Error> {
-        self.checked_add(other).ok_or(Error::MathOverflow)
+        self.checked_add(other).ok_or(Error::Overflow)
     }
 }
 
 impl SafeSub for i128 {
     fn safe_sub(self, other: i128) -> Result<i128, Error> {
-        self.checked_sub(other).ok_or(Error::MathOverflow)
+        self.checked_sub(other).ok_or(Error::Overflow)
     }
 }
 
 impl SafeMul for i128 {
     fn safe_mul(self, other: i128) -> Result<i128, Error> {
-        self.checked_mul(other).ok_or(Error::MathOverflow)
+        self.checked_mul(other).ok_or(Error::Overflow)
     }
 }
 
 impl SafeDiv for i128 {
     fn safe_div(self, other: i128) -> Result<i128, Error> {
-        if other == 0 {
-            return Err(Error::DivisionByZero);
-        }
-        self.checked_div(other).ok_or(Error::MathOverflow)
+        self.checked_div(other).ok_or(Error::InvalidInput)
     }
 }
 
@@ -71,12 +68,7 @@ pub fn checked_mul(a: i128, b: i128) -> Result<i128, Error> {
     a.safe_mul(b).map_err(|_| Error::Overflow)
 }
 
-pub fn checked_div(a: i128, b: i128) -> Result<i128, Error> {
-    a.safe_div(b).map_err(|e| {
-        if e == Error::DivisionByZero {
-            Error::InvalidInput
-        } else {
-            Error::Overflow
-        }
+pub fn checked_div(a: i128, b: i128) -> Result<i128, Error> {        a.safe_div(b).map_err(|_e| {
+        Error::InvalidInput
     })
 }

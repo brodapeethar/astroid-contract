@@ -4,9 +4,9 @@ extern crate std;
 use crate::access::Role;
 use crate::{WalletContract, WalletContractClient};
 use astroid_shared::errors::Error;
-use astroid_shared::types::ResourceState;
+use astroid_shared::types::{ModuleKind, ResourceState};
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{testutils::Events, token, Address, Env, IntoVal, Symbol, Val};
+use soroban_sdk::{testutils::Events, token, Address, Env, IntoVal, String, Symbol, Val};
 
 /// Assert that the canonical `ContractEvent` with the given variant symbol was
 /// published during the test (single-topic event = the variant name).
@@ -16,15 +16,71 @@ fn assert_event(env: &Env, variant: &str) {
         .events()
         .all()
         .iter()
-        .any(|(_contract_id, topics, _data)| topics.contains(want));
+        .any(|(_contract_id, topics, _data)| topics.contains(&want));
     assert!(found, "expected ContractEvent::{} to be emitted", variant);
 }
 
 struct Harness {
     env: Env,
     client: WalletContractClient<'static>,
-    admin: Address,
     token: Address,
+    registry_addr: Address,
+    org: String,
+    admin: Address,
+}
+
+/// A minimal mock registry that stores module addresses in instance storage.
+/// Only the `lookup` function is needed for wallet authorization checks.
+#[soroban_sdk::contract]
+pub struct MockRegistry;
+
+#[soroban_sdk::contractimpl]
+impl MockRegistry {
+    pub fn __constructor(_env: Env) {}
+
+    /// Store a module address: key = (org, kind), value = address.
+    pub fn set_module(
+        env: Env,
+        org: String,
+        kind: ModuleKind,
+        address: Address,
+    ) {
+        use soroban_sdk::contracttype;
+        #[contracttype]
+        enum Key {
+            Module(String, ModuleKind),
+        }
+        env.storage()
+            .instance()
+            .set(&Key::Module(org, kind), &address);
+    }
+
+    /// RegistryInterface::lookup
+    pub fn lookup(
+        env: Env,
+        org: String,
+        kind: ModuleKind,
+    ) -> Result<Address, Error> {
+        use soroban_sdk::contracttype;
+        #[contracttype]
+        enum Key {
+            Module(String, ModuleKind),
+        }
+        env.storage()
+            .instance()
+            .get(&Key::Module(org, kind))
+            .ok_or(Error::NotFound)
+    }
+
+    /// RegistryInterface::verify_owner — not used by wallet but required by the
+    /// trait.
+    pub fn verify_owner(
+        _env: Env,
+        _org: String,
+        _owner: Address,
+    ) -> Result<bool, Error> {
+        Ok(false)
+    }
 }
 
 fn setup() -> Harness {
@@ -32,9 +88,17 @@ fn setup() -> Harness {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
+
+    // Deploy the mock registry.
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_addr = registry_id.clone();
+
+    let org = String::from_str(&env, "test-org");
+
+    // Deploy the wallet contract.
     let contract_id = env.register_contract(None, WalletContract);
     let client = WalletContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
+    client.initialize(&admin, &registry_addr, &org);
 
     // A test SAC token whose admin can mint funds to users.
     let token_admin = Address::generate(&env);
@@ -45,8 +109,10 @@ fn setup() -> Harness {
     Harness {
         env,
         client,
-        admin,
         token,
+        registry_addr,
+        org,
+        admin,
     }
 }
 
@@ -58,6 +124,23 @@ fn mint(h: &Harness, to: &Address, amount: i128) {
 fn token_balance(h: &Harness, who: &Address) -> i128 {
     token::TokenClient::new(&h.env, &h.token).balance(who)
 }
+
+/// Helper to register a module address in the mock registry.
+fn register_mock_module(h: &Harness, kind: ModuleKind, addr: &Address) {
+    // Call the mock registry's set_module directly via the contract client.
+    // We need the raw contract client for the mock.
+    #[soroban_sdk::contractclient(name = "MockRegistryClient")]
+    pub trait MockRegistryInterface {
+        fn set_module(env: Env, org: String, kind: ModuleKind, address: Address);
+        fn lookup(env: Env, org: String, kind: ModuleKind) -> Result<Address, Error>;
+    }
+    let mock_client = MockRegistryClient::new(&h.env, &h.registry_addr);
+    mock_client.set_module(&h.org, &kind, addr);
+}
+
+// ---------------------------------------------------------------------------
+// Existing tests (updated for new initialize signature)
+// ---------------------------------------------------------------------------
 
 #[test]
 fn create_wallet_starts_active() {
@@ -249,17 +332,12 @@ fn standard_events_emitted() {
 // ---------------------------------------------------------------------------
 
 /// Create a wallet holding `amount` of the harness token.
-fn funded_wallet(h: &Harness, amount: i128) -> (u64, Address) {
-// Role-based access control
-// ---------------------------------------------------------------------------
-
-/// A wallet funded with `amount`, plus its owner.
 fn funded_wallet(h: &Harness, amount: i128) -> (Address, u64) {
     let owner = Address::generate(&h.env);
     let id = h.client.create_wallet(&owner);
     mint(h, &owner, amount);
     h.client.deposit(&id, &owner, &h.token, &amount);
-    (id, owner)
+    (owner, id)
 }
 
 #[test]
@@ -272,7 +350,7 @@ fn breaker_starts_reset_and_guardian_defaults_to_admin() {
 #[test]
 fn paused_wallet_contract_blocks_all_outgoing_value() {
     let h = setup();
-    let (id, owner) = funded_wallet(&h, 1_000);
+    let (owner, id) = funded_wallet(&h, 1_000);
     let recipient = Address::generate(&h.env);
 
     h.client.emergency_pause(&h.admin);
@@ -307,7 +385,7 @@ fn paused_wallet_contract_blocks_new_wallets() {
 #[test]
 fn inspection_and_recovery_stay_available_while_paused() {
     let h = setup();
-    let (id, owner) = funded_wallet(&h, 1_000);
+    let (owner, id) = funded_wallet(&h, 1_000);
     h.client.emergency_pause(&h.admin);
 
     // Read-only inspection is unaffected.
@@ -332,7 +410,7 @@ fn inspection_and_recovery_stay_available_while_paused() {
 #[test]
 fn normal_operation_resumes_after_unpause() {
     let h = setup();
-    let (id, owner) = funded_wallet(&h, 1_000);
+    let (owner, id) = funded_wallet(&h, 1_000);
     let recipient = Address::generate(&h.env);
 
     h.client.emergency_pause(&h.admin);
@@ -412,8 +490,21 @@ fn redundant_breaker_transitions_are_rejected() {
     assert_eq!(
         h.client.try_emergency_pause(&h.admin),
         Err(Ok(Error::InvalidState))
-    (owner, id)
+    );
 }
+
+#[test]
+fn breaker_events_are_emitted() {
+    let h = setup();
+    h.client.emergency_pause(&h.admin);
+    assert_event(&h.env, "WalletPaused");
+    h.client.emergency_unpause(&h.admin);
+    assert_event(&h.env, "WalletUnpaused");
+}
+
+// ---------------------------------------------------------------------------
+// Role-based access control
+// ---------------------------------------------------------------------------
 
 #[test]
 fn owner_is_implicitly_admin() {
@@ -642,12 +733,6 @@ fn role_checks_report_unknown_wallets_as_not_found() {
 }
 
 #[test]
-fn breaker_events_are_emitted() {
-    let h = setup();
-    h.client.emergency_pause(&h.admin);
-    assert_event(&h.env, "WalletPaused");
-    h.client.emergency_unpause(&h.admin);
-    assert_event(&h.env, "WalletUnpaused");
 fn granting_on_an_archived_wallet_is_refused() {
     let h = setup();
     let owner = Address::generate(&h.env);

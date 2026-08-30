@@ -536,7 +536,7 @@ impl BudgetContract {
     fn require_active(budget: &Budget) -> Result<(), Error> {
         match budget.state {
             ResourceState::Active => Ok(()),
-            ResourceState::Frozen | ResourceState::Paused => Err(Error::BudgetFrozen),
+            ResourceState::Frozen | ResourceState::Paused => Err(Error::InvalidState),
             ResourceState::Archived => Err(Error::BudgetArchived),
         }
     }

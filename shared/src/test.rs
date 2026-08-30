@@ -22,7 +22,7 @@ fn math_happy_paths() {
 #[test]
 fn math_overflow_underflow() {
     assert_eq!(checked_add(i128::MAX, 1), Err(Error::Overflow));
-    assert_eq!(checked_sub(i128::MIN, 1), Err(Error::MathOverflow));
+    assert_eq!(checked_sub(i128::MIN, 1), Err(Error::Overflow));
     assert_eq!(checked_mul(i128::MAX, 2), Err(Error::Overflow));
     assert_eq!(checked_div(1, 0), Err(Error::InvalidInput));
 }

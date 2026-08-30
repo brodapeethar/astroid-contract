@@ -115,6 +115,7 @@ dependencies = [
 name = "astroid-wallet"
 version = "0.1.0"
 dependencies = [
+ "astroid-interfaces",
  "astroid-shared",
  "soroban-sdk",
 ]

@@ -171,7 +171,7 @@ fn frozen_budget_rejects_consume() {
     );
     h.client.freeze(&h.owner, &id(&h.env, "eng"));
     let res = h.client.try_consume(&h.owner, &id(&h.env, "eng"), &100);
-    assert_eq!(res, Err(Ok(Error::BudgetFrozen)));
+    assert_eq!(res, Err(Ok(Error::InvalidState)));
     // Unfreeze restores spending.
     h.client.unfreeze(&h.owner, &id(&h.env, "eng"));
     let rem = h.client.consume(&h.owner, &id(&h.env, "eng"), &100);
