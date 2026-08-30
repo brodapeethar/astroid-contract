@@ -273,7 +273,7 @@ impl ProposalContract {
             return Err(Error::InvalidProposalState);
         }
         if !proposal.approvers.contains(&caller) {
-            return Err(Error::NotAnApprover);
+            return Err(Error::Unauthorized);
         }
         let akey = DataKey::Approval(id, caller.clone());
         if env.storage().persistent().get(&akey).unwrap_or(false) {
@@ -301,7 +301,7 @@ impl ProposalContract {
             return Err(Error::InvalidProposalState);
         }
         if !proposal.approvers.contains(&caller) {
-            return Err(Error::NotAnApprover);
+            return Err(Error::Unauthorized);
         }
         proposal.state = ProposalState::Rejected;
         if let Some(dep) = proposal.deposit.first() {
@@ -336,7 +336,7 @@ impl ProposalContract {
         if proposal.grace_period != 0
             && env.ledger().timestamp() > proposal.created_at + proposal.grace_period
         {
-            return Err(Error::CancellationWindowClosed);
+            return Err(Error::InvalidProposalState);
         }
         proposal.state = ProposalState::Cancelled;
         if let Some(dep) = proposal.deposit.first() {

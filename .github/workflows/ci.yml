@@ -16,6 +16,9 @@ jobs:
         with:
           targets: wasm32v1-none
       - uses: Swatinem/rust-cache@v2
+      # Install a pinned prebuilt stellar-cli. `cargo install stellar-cli` is not
+      # used because the `opt` feature it needs no longer exists on the crate
+      # (renamed in v28), which would break the build job for every PR.
       # Install the stellar-cli 28.0.0 prebuilt binary instead of compiling
       # from source: a from-source `cargo install` takes ~10 minutes and OOMs
       # on the 2-core/7 GB GitHub runner. The release asset is checksum-pinned.

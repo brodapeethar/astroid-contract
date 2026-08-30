@@ -43,7 +43,7 @@ pub fn require_not_expired(env: &Env, expiry: u64) -> Result<(), Error> {
 /// Require that the current ledger time has reached `unlock_at` (time locks).
 pub fn require_time_reached(env: &Env, unlock_at: u64) -> Result<(), Error> {
     if env.ledger().timestamp() < unlock_at {
-        return Err(Error::TimeLocked);
+        return Err(Error::TimelockNotExpired);
     }
     Ok(())
 }

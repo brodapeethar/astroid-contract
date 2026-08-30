@@ -110,6 +110,7 @@ pub struct Allowance {
 enum DataKey {
     Treasury,
     Holding(Address),
+    ReentrancyLock,
     /// Emergency circuit breaker freeze flag (persistent).
     Frozen,
     Milestone(u64),
@@ -143,6 +144,7 @@ impl TreasuryContract {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         events::treasury_created(&env, &org, &admin);
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -160,6 +162,7 @@ impl TreasuryContract {
         );
         env.events()
             .publish((symbol_short!("treasury"), symbol_short!("policy")), ());
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -177,6 +180,7 @@ impl TreasuryContract {
         );
         env.events()
             .publish((symbol_short!("treasury"), symbol_short!("budget")), ());
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -194,6 +198,7 @@ impl TreasuryContract {
         );
         env.events()
             .publish((symbol_short!("treasury"), symbol_short!("multisig")), ());
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -209,6 +214,7 @@ impl TreasuryContract {
         );
         env.events()
             .publish((symbol_short!("treasury"), symbol_short!("frozen")), ());
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -232,6 +238,7 @@ impl TreasuryContract {
         );
         env.events()
             .publish((symbol_short!("treasury"), symbol_short!("unfrozen")), ());
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -243,19 +250,22 @@ impl TreasuryContract {
         from.require_auth();
         let t = Self::load(&env);
         Self::require_active(&t)?;
+        Self::lock(&env)?;
+        let mut h = Self::load_holding(&env, &asset);
+        h.total_in = checked_add(h.total_in, amount)?;
+        Self::store_holding(&env, &asset, &h);
+        env.events().publish(
+            (symbol_short!("treasury"), symbol_short!("deposited")),
+            (asset.clone(), amount),
+        );
         // Pull tokens into the contract's own custody.
         token::TokenClient::new(&env, &asset).transfer(
             &from,
             &env.current_contract_address(),
             &amount,
         );
-        let mut h = Self::load_holding(&env, &asset);
-        h.total_in = checked_add(h.total_in, amount)?;
-        Self::store_holding(&env, &asset, &h);
-        env.events().publish(
-            (symbol_short!("treasury"), symbol_short!("deposited")),
-            (asset, amount),
-        );
+        Self::unlock(&env);
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -271,6 +281,7 @@ impl TreasuryContract {
         let mut h = Self::load_holding(&env, &asset);
         h.budget_id = Some(budget_id);
         Self::store_holding(&env, &asset, &h);
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -309,6 +320,7 @@ impl TreasuryContract {
             .set(&DataKey::Allowance(id), &allowance);
         env.events()
             .publish((symbol_short!("treasury"), symbol_short!("allow")), ());
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -331,11 +343,12 @@ impl TreasuryContract {
             .persistent()
             .has(&DataKey::Allowance(id.clone()))
         {
-            return Err(Error::AllowanceNotFound);
+            return Err(Error::NotFound);
         }
         env.storage().persistent().remove(&DataKey::Allowance(id));
         env.events()
             .publish((symbol_short!("treasury"), symbol_short!("allowrm")), ());
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -354,7 +367,7 @@ impl TreasuryContract {
         env.storage()
             .persistent()
             .get(&DataKey::Allowance(id))
-            .ok_or(Error::AllowanceNotFound)
+            .ok_or(Error::NotFound)
     }
 
     /// Withdraw assets to a recipient. Only the admin may call, and the spend
@@ -394,6 +407,8 @@ impl TreasuryContract {
 
         // 3. Withdrawal allowance enforcement — restrict agent-driven spends to
         //    pre-approved periodic ceilings per (agent, recipient, asset).
+        Self::lock(&env)?;
+        
         let allowance_id = AllowanceId {
             agent: caller.clone(),
             recipient: to.clone(),
@@ -405,10 +420,12 @@ impl TreasuryContract {
             .get::<DataKey, Allowance>(&DataKey::Allowance(allowance_id.clone()))
         {
             if al.expires_at != 0 && env.ledger().timestamp() >= al.expires_at {
+                Self::unlock(&env);
                 return Err(Error::AllowanceExpired);
             }
             let remaining = checked_sub(al.limit, al.spent)?;
             if amount > remaining {
+                Self::unlock(&env);
                 return Err(Error::AllowanceExceeded);
             }
             al.spent = checked_add(al.spent, amount)?;
@@ -419,11 +436,13 @@ impl TreasuryContract {
 
         // 4. Debit the internal ledger, then move real tokens out of custody.
         if holding.total_in < amount {
+            Self::unlock(&env);
             return Err(Error::InsufficientFunds);
         }
         holding.total_in = checked_sub(holding.total_in, amount)?;
         holding.total_out = checked_add(holding.total_out, amount)?;
         Self::store_holding(&env, &asset, &holding);
+        events::transfer_executed(&env, &t.admin, &to, &asset, amount);
         token::TokenClient::new(&env, &asset).transfer(
             &env.current_contract_address(),
             &to,
@@ -439,6 +458,7 @@ impl TreasuryContract {
                 amount,
             },
         );
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -503,6 +523,7 @@ impl TreasuryContract {
         }
 
         // 5. Debit the internal ledger once, then move real tokens per recipient.
+        Self::lock(&env)?;
         holding.total_in = checked_sub(holding.total_in, total)?;
         holding.total_out = checked_add(holding.total_out, total)?;
         Self::store_holding(&env, &asset, &holding);
@@ -528,6 +549,9 @@ impl TreasuryContract {
             (symbol_short!("treasury"), symbol_short!("batchpay")),
             (asset, payments.len(), total),
         );
+
+        Self::unlock(&env);
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -634,6 +658,7 @@ impl TreasuryContract {
             (symbol_short!("milestone"), symbol_short!("disbursed")),
             (milestone_id, d.disbursed, amount),
         );
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -690,6 +715,7 @@ impl TreasuryContract {
         if frozen {
             return Err(Error::InvalidState);
         }
+        Self::unlock(&env);
         Ok(())
     }
 
@@ -708,6 +734,28 @@ impl TreasuryContract {
         }
     }
 
+    fn lock(env: &Env) -> Result<(), Error> {
+        let is_locked: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReentrancyLock)
+            .unwrap_or(false);
+        if is_locked {
+            return Err(Error::InvalidState);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ReentrancyLock, &true);
+        Self::unlock(&env);
+        Ok(())
+    }
+
+    fn unlock(env: &Env) {
+        env.storage()
+            .instance()
+            .set(&DataKey::ReentrancyLock, &false);
+    }
+
     fn load_holding(env: &Env, asset: &Address) -> Holding {
         env.storage()
             .persistent()
@@ -719,35 +767,13 @@ impl TreasuryContract {
                 budget_id: None,
             })
     }
+
     fn store_holding(env: &Env, asset: &Address, h: &Holding) {
         env.storage()
             .persistent()
             .set(&DataKey::Holding(asset.clone()), h);
         env.storage().persistent().extend_ttl(
             &DataKey::Holding(asset.clone()),
-            PERSISTENT_LIFETIME_THRESHOLD,
-            PERSISTENT_BUMP_AMOUNT,
-        );
-    }
-
-    fn load_allowance(env: &Env, agent: &Address, asset: &Address) -> Allowance {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Allowance(agent.clone(), asset.clone()))
-            .unwrap_or(Allowance {
-                agent: agent.clone(),
-                asset: asset.clone(),
-                limit: 0,
-                consumed: 0,
-            })
-    }
-
-    fn store_allowance(env: &Env, agent: &Address, asset: &Address, a: &Allowance) {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Allowance(agent.clone(), asset.clone()), a);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Allowance(agent.clone(), asset.clone()),
             PERSISTENT_LIFETIME_THRESHOLD,
             PERSISTENT_BUMP_AMOUNT,
         );

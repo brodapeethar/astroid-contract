@@ -4,6 +4,8 @@
 //! consumers (the Astroid API, SDK and dashboard) can map a stable `u32` code
 //! to a meaningful message. Numeric values are grouped by domain and MUST NOT
 //! be reordered or reused once released — they are part of the public ABI.
+//!
+//! **Soroban limit:** the `#[contracterror]` macro supports at most 50 variants.
 
 use soroban_sdk::contracterror;
 
@@ -19,20 +21,19 @@ pub enum Error {
     NotInitialized = 5,
     AlreadyInitialized = 6,
 
-    // --- Value / arithmetic (10-12) ---
+    // --- Value / arithmetic (10-13) ---
     InsufficientFunds = 10,
     Overflow = 11,
     InvalidAmount = 12,
+    Underflow = 13,
 
-    // --- Policy (20-25) ---
+    // --- Policy (20-26) ---
     PolicyDenied = 20,
     EmergencyLock = 21,
-    PolicyRecipientRestricted = 22,
-    PolicyMerchantBlocked = 23,
-    PolicyCategoryRestricted = 24,
     AssetNotWhitelisted = 25,
+    PolicyPaused = 26,
 
-    // --- Registry (30-39) ---
+    // --- Registry (30-31) ---
     RegistryFrozen = 30,
     ModuleDeprecated = 31,
 
@@ -42,19 +43,19 @@ pub enum Error {
     AssetNotAuthorized = 43,
     BudgetExpired = 44,
 
-    // --- Wallet (50-53) ---
+    // --- Wallet (50-55) ---
     WalletFrozen = 50,
     WalletArchived = 51,
     WalletPaused = 52,
     InvalidState = 53,
     UnauthorizedDispatch = 54,
+    ReserveViolation = 55,
 
-    // --- Multisig / approvals (61-69) ---
+    // --- Multisig / approvals (61-69, 90-92) ---
     ThresholdNotMet = 61,
     AlreadySigned = 62,
     NotASigner = 63,
     InvalidThreshold = 64,
-    TimeLocked = 65,
     TooManySigners = 66,
     /// A sub-call within a batch failed; the entire batch reverted atomically.
     BatchCallFailed = 67,
@@ -74,20 +75,21 @@ pub enum Error {
     ProposalExpired = 71,
     InvalidProposalState = 72,
     ProposalNotApproved = 73,
-    NotAnApprover = 74,
-    CancellationWindowClosed = 75,
     /// A prerequisite proposal has not executed, so the dependent proposal may
     /// not execute yet.
     PrerequisiteNotMet = 78,
     /// A declared dependency would close a cycle in the dependency graph.
     CircularDependencyDetected = 79,
 
-    // --- Escrow (80-81) ---
-    EscrowExpired = 80,
-    TimeLockActive = 81,
+    // --- Escrow (80-87) ---
+    ConditionNotMet = 80,
+    EscrowNotFunded = 81,
+    EscrowExpired = 82,
+    InvalidCondition = 83,
+    TimeLockActive = 84,
+    GraceActive = 87,
 
-    // --- Treasury allowances (83-85) ---
-    AllowanceExceeded = 83,
-    AllowanceExpired = 84,
-    AllowanceNotFound = 85,
+    // --- Treasury allowances (88-89) ---
+    AllowanceExceeded = 88,
+    AllowanceExpired = 89,
 }

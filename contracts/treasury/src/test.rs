@@ -30,6 +30,7 @@ struct Harness<'a> {
     admin: Address,
     multisig: Address,
     asset: Address,
+    second_asset: Address,
 }
 
 /// Register a treasury plus a test SAC token, and mint `funded` of the asset to
@@ -49,6 +50,12 @@ fn setup(org: &str, funded: i128) -> Harness<'static> {
     let asset = env
         .register_stellar_asset_contract_v2(token_admin)
         .address();
+
+    let token_admin2 = Address::generate(&env);
+    let second_asset = env
+        .register_stellar_asset_contract_v2(token_admin2)
+        .address();
+
     if funded > 0 {
         token::StellarAssetClient::new(&env, &asset).mint(&admin, &funded);
     }
@@ -59,6 +66,7 @@ fn setup(org: &str, funded: i128) -> Harness<'static> {
         admin,
         multisig,
         asset,
+        second_asset,
     }
 }
 

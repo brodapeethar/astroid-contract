@@ -22,9 +22,31 @@ fn math_happy_paths() {
 #[test]
 fn math_overflow_underflow() {
     assert_eq!(checked_add(i128::MAX, 1), Err(Error::Overflow));
-    assert_eq!(checked_sub(i128::MIN, 1), Err(Error::Overflow));
+    assert_eq!(checked_sub(i128::MIN, 1), Err(Error::Underflow));
     assert_eq!(checked_mul(i128::MAX, 2), Err(Error::Overflow));
     assert_eq!(checked_div(1, 0), Err(Error::InvalidInput));
+}
+
+#[test]
+fn math_additional_edge_cases() {
+    // Underflow only when the result drops below the minimum value. Per the
+    // helper contracts, `checked_add`/`checked_mul` report any wrap as Overflow
+    // while `checked_sub` reports wraps as Underflow.
+    assert_eq!(checked_sub(0, 1), Ok(-1));
+    assert_eq!(checked_sub(i128::MIN, 1), Err(Error::Underflow));
+    assert_eq!(checked_add(i128::MIN, -1), Err(Error::Overflow));
+    // Multiplication overflow on the extreme negative bound.
+    assert_eq!(checked_mul(i128::MIN, -1), Err(Error::Overflow));
+    assert_eq!(checked_mul(i128::MIN, 2), Err(Error::Overflow));
+    // Division by zero is rejected before any arithmetic is attempted.
+    assert_eq!(checked_div(0, 0), Err(Error::InvalidInput));
+    assert_eq!(checked_div(-7, 0), Err(Error::InvalidInput));
+    // The one division that overflows: MIN / -1 has no representable result.
+    assert_eq!(checked_div(i128::MIN, -1), Err(Error::Overflow));
+    // Zero and identity operations stay exact.
+    assert_eq!(checked_add(i128::MAX, 0), Ok(i128::MAX));
+    assert_eq!(checked_mul(0, i128::MAX), Ok(0));
+    assert_eq!(checked_div(i128::MIN, 1), Ok(i128::MIN));
 }
 
 #[test]
@@ -70,7 +92,10 @@ fn time_validation() {
     // Time lock: reached only once timestamp >= unlock_at.
     assert_eq!(require_time_reached(&env, 500), Ok(()));
     assert_eq!(require_time_reached(&env, 1_000), Ok(()));
-    assert_eq!(require_time_reached(&env, 2_000), Err(Error::TimeLocked));
+    assert_eq!(
+        require_time_reached(&env, 2_000),
+        Err(Error::TimelockNotExpired)
+    );
 }
 
 #[test]

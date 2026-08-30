@@ -228,7 +228,7 @@ fn time_lock_blocks_early_execution() {
     h.client.approve(&h.signers[1], &id);
     // Threshold met (4), but time lock not reached.
     let res = h.client.try_execute(&h.signers[0], &id);
-    assert_eq!(res, Err(Ok(Error::TimeLocked)));
+    assert_eq!(res, Err(Ok(Error::TimelockNotExpired)));
 
     // Advance past the lock.
     h.env.ledger().set_timestamp(6_000);
@@ -533,8 +533,6 @@ fn cannot_add_signer_with_zero_weight() {
         .client
         .try_propose_signer_addition(&h.signers[0], &extra, &0);
     assert_eq!(res, Err(Ok(Error::InvalidSignerWeight)));
-    let res = h.client.try_add_signer(&h.signers[0], &extra, &0);
-    assert_eq!(res, Err(Ok(Error::InsufficientWeight)));
 }
 
 #[test]

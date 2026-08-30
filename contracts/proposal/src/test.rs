@@ -136,7 +136,7 @@ fn non_approver_cannot_approve() {
     let id = create(&h, 2, 5_000);
     let stranger = Address::generate(&h.env);
     let res = h.client.try_approve(&stranger, &id);
-    assert_eq!(res, Err(Ok(Error::NotAnApprover)));
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn test_cancellation_grace_window() {
 
     // Cancel should fail
     let res = h.client.try_cancel(&h.proposer, &id);
-    assert_eq!(res, Err(Ok(Error::CancellationWindowClosed)));
+    assert_eq!(res, Err(Ok(Error::InvalidProposalState)));
 
     // Create a new one and cancel inside window
     let id2 = h.client.create(

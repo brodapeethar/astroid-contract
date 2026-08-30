@@ -13,7 +13,7 @@
 //! - [`types`]      — `#[contracttype]` values reused by multiple contracts.
 //! - [`math`]       — checked `i128` arithmetic (never wraps, returns errors).
 //! - [`validation`] — small guard helpers (positive amounts, time windows, ...).
-//! - [`constants`]  — protocol-wide constants (time units, storage TTLs, limits).
+//! - [`constants`] — protocol-wide constants (time units, storage TTLs, limits).
 
 pub mod constants;
 pub mod errors;

@@ -16,9 +16,11 @@
 //! This contract answers: "may `amount` of `asset` flow to `recipient`
 //! right now?" with a deterministic [`Error`] when it may not.
 //!
-//! Functions: `initialize`, `register_policy`, `rotate_policy`, `check_transfer`.
+//! Functions: `initialize`, `register_policy`, `rotate_policy`, `pause`,
+//! `unpause`, `paused`, `check_transfer`.
 
 use astroid_interfaces::PolicyInterface;
+use astroid_shared::constants::MAX_PAUSE_DURATION;
 use astroid_shared::errors::Error;
 use astroid_shared::events::ContractEvent;
 use astroid_shared::validation::require_non_empty;
@@ -44,6 +46,10 @@ pub struct Policy {
     pub expires_at: u64,
     /// Whether the policy is currently enabled.
     pub enabled: bool,
+    /// Whether recipient whitelist mode is active. When active, transfers are
+    /// only permitted to addresses in the dynamic whitelist; an empty whitelist
+    /// denies every recipient by default.
+    pub whitelist_enabled: bool,
 }
 
 #[contracttype]
@@ -52,6 +58,10 @@ enum DataKey {
     Policy(String),
     Count,
     Blacklist(Address),
+    /// Whitelisted recipient -> policy id that added it (dynamic allow-list).
+    Whitelist(Address),
+    Admin,
+    Pause,
     MerchantBlacklist(Address),
     CategoryBlacklist(String),
     /// Per-policy asset whitelist: (policy_id, asset) -> true.
@@ -67,12 +77,66 @@ pub struct PolicyContract;
 #[contractimpl]
 #[allow(clippy::too_many_arguments)]
 impl PolicyContract {
-    pub fn initialize(env: Env) -> Result<(), Error> {
+    /// Initialize the policy contract, registering `admin` as the only address
+    /// authorized to rotate policies and to operate the emergency pause switch.
+    pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Count) {
             return Err(Error::AlreadyInitialized);
         }
+        admin.require_auth();
         env.storage().instance().set(&DataKey::Count, &0u32);
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Pause, &0u64);
         Ok(())
+    }
+
+    /// Activate the time-bound emergency pause. While paused, every
+    /// `check_transfer` evaluation is rejected with `PolicyPaused`. `duration`
+    /// is the number of seconds the pause lasts; it is capped by
+    /// `MAX_PAUSE_DURATION` to prevent indefinite lockouts. Passing `duration ==
+    /// 0` activates an indefinite pause that only an authorized admin can lift
+    /// via `unpause`. Admin only.
+    pub fn pause(env: Env, caller: Address, duration: u64) -> Result<(), Error> {
+        Self::require_admin(&env, &caller)?;
+        let paused_until: u64 = if duration == 0 {
+            // Indefinite pause — lifted only by an explicit `unpause`.
+            u64::MAX
+        } else {
+            if duration > MAX_PAUSE_DURATION {
+                return Err(Error::InvalidInput);
+            }
+            env.ledger()
+                .timestamp()
+                .checked_add(duration)
+                .ok_or(Error::Overflow)?
+        };
+        env.storage().instance().set(&DataKey::Pause, &paused_until);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("paused")),
+            paused_until,
+        );
+        Ok(())
+    }
+
+    /// Lift an active emergency pause. Admin only. Returns evaluation to normal
+    /// immediately regardless of any remaining duration.
+    pub fn unpause(env: Env, caller: Address) -> Result<(), Error> {
+        let _admin = Self::require_admin(&env, &caller)?;
+        env.storage().instance().set(&DataKey::Pause, &0u64);
+        env.events()
+            .publish((symbol_short!("policy"), symbol_short!("resumed")), ());
+        Ok(())
+    }
+
+    /// Whether the contract is currently paused (active pause window or
+    /// indefinite pause).
+    pub fn paused(env: Env) -> bool {
+        let paused_until: u64 = env.storage().instance().get(&DataKey::Pause).unwrap_or(0);
+        if paused_until == 0 {
+            return false;
+        }
+        // Indefinite pause (u64::MAX) or a still-active time window.
+        paused_until == u64::MAX || env.ledger().timestamp() < paused_until
     }
 
     /// Register a policy. `owner` gates subsequent rotations. Cheap scalar gates
@@ -105,6 +169,7 @@ impl PolicyContract {
             allowed_asset,
             expires_at,
             enabled: true,
+            whitelist_enabled: false,
         };
         env.storage()
             .persistent()
@@ -298,6 +363,31 @@ impl PolicyContract {
         Ok(())
     }
 
+    /// Turn recipient whitelist mode on/off for a policy (owner only). When
+    /// enabled, `check_transfer` only permits recipients present in the dynamic
+    /// whitelist — an empty whitelist denies every recipient by default.
+    pub fn set_whitelist_enabled(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let mut policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        policy.whitelist_enabled = enabled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Policy(policy_id.clone()), &policy);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("wl_mode")),
+            (policy_id, enabled),
+        );
+        Ok(())
+    }
+
     /// Add a merchant address to the merchant blacklist (owner only).
     pub fn add_merchant_blacklist(
         env: Env,
@@ -342,6 +432,54 @@ impl PolicyContract {
         env.events().publish(
             (symbol_short!("policy"), symbol_short!("merch_rem")),
             (policy_id, merchant_address),
+        );
+        Ok(())
+    }
+
+    /// Add an address to the recipient whitelist (owner only).
+    pub fn add_whitelist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        address: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::Whitelist(address.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyExists);
+        }
+        env.storage().persistent().set(&key, &policy_id);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("wl_add")),
+            (policy_id, address),
+        );
+        Ok(())
+    }
+
+    /// Remove an address from the recipient whitelist (owner only).
+    pub fn remove_whitelist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        address: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::Whitelist(address.clone());
+        if !env.storage().persistent().has(&key) {
+            return Err(Error::NotFound);
+        }
+        env.storage().persistent().remove(&key);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("wl_rem")),
+            (policy_id, address),
         );
         Ok(())
     }
@@ -446,7 +584,7 @@ impl PolicyContract {
     }
 
     /// Check if a spending category is restricted. Returns Ok(()) if the category
-    /// is allowed, or PolicyCategoryRestricted if it's blacklisted.
+    /// is allowed, or PolicyDenied if it's blacklisted.
     pub fn check_category(env: Env, policy_id: String, category: String) -> Result<(), Error> {
         // Empty category is always allowed
         if category.is_empty() {
@@ -459,7 +597,7 @@ impl PolicyContract {
             .has(&DataKey::CategoryBlacklist(category.clone()))
         {
             events_policy_violation(&env, &policy_id, "category_restricted");
-            return Err(Error::PolicyCategoryRestricted);
+            return Err(Error::PolicyDenied);
         }
         Ok(())
     }
@@ -471,6 +609,19 @@ impl PolicyContract {
     }
 
     // --- internels ---
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<Address, Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::Unauthorized)?;
+        if &admin != caller {
+            return Err(Error::Unauthorized);
+        }
+        caller.require_auth();
+        Ok(admin)
+    }
 
     fn load(env: &Env, id: &String) -> Result<Policy, Error> {
         env.storage()
@@ -495,6 +646,11 @@ impl PolicyInterface for PolicyContract {
         recipient: Address,
         amount: i128,
     ) -> Result<(), Error> {
+        // Emergency pause: block all policy evaluations while active.
+        if Self::paused(env.clone()) {
+            events_policy_violation(&env, &policy_id, "paused");
+            return Err(Error::PolicyPaused);
+        }
         let policy = Self::load(&env, &policy_id)?;
         // Disabled policies deny every spend.
         if !policy.enabled {
@@ -508,7 +664,7 @@ impl PolicyInterface for PolicyContract {
             .has(&DataKey::Blacklist(recipient.clone()))
         {
             events_policy_violation(&env, &policy_id, "blacklisted");
-            return Err(Error::PolicyRecipientRestricted);
+            return Err(Error::PolicyDenied);
         }
         if env
             .storage()
@@ -516,7 +672,7 @@ impl PolicyInterface for PolicyContract {
             .has(&DataKey::MerchantBlacklist(recipient.clone()))
         {
             events_policy_violation(&env, &policy_id, "merchant_blocked");
-            return Err(Error::PolicyMerchantBlocked);
+            return Err(Error::PolicyDenied);
         }
         // --- Allowance / amount gates ---
         if policy.expires_at != 0 && env.ledger().timestamp() >= policy.expires_at {
@@ -541,32 +697,17 @@ impl PolicyInterface for PolicyContract {
         }
         // Check asset whitelist (Issue #37)
         Self::validate_asset(env.clone(), policy_id.clone(), asset.clone())?;
-        // Check blacklist
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Blacklist(recipient.clone()))
+        // Recipient whitelist: when whitelist mode is active, the recipient must
+        // be a whitelisted address. An empty whitelist denies everything (fail
+        // closed by default).
+        if policy.whitelist_enabled
+            && !env
+                .storage()
+                .persistent()
+                .has(&DataKey::Whitelist(recipient.clone()))
         {
-            events_policy_violation(&env, &policy_id, "blacklisted");
-            return Err(Error::PolicyRecipientRestricted);
-        }
-        // Check merchant blacklist
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::MerchantBlacklist(recipient.clone()))
-        {
-            events_policy_violation(&env, &policy_id, "merchant_blocked");
-            return Err(Error::PolicyMerchantBlocked);
-        }
-        // Check merchant blacklist
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::MerchantBlacklist(recipient.clone()))
-        {
-            events_policy_violation(&env, &policy_id, "merchant_blocked");
-            return Err(Error::PolicyMerchantBlocked);
+            events_policy_violation(&env, &policy_id, "not_whitelisted");
+            return Err(Error::PolicyDenied);
         }
         Ok(())
     }

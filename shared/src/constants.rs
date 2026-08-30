@@ -53,3 +53,8 @@ pub const MAX_BATCH_PAYMENTS: u32 = 32;
 
 /// Upper bound on how many distinct assets a single escrow agreement may hold.
 pub const MAX_ESCROW_ASSETS: u32 = 10;
+
+/// Maximum duration (seconds) allowed for a single temporary emergency pause.
+/// Caps `pause(duration)` so an authorized admin cannot lock policy evaluation
+/// indefinitely; indefinite pauses must go through `unpause` explicitly.
+pub const MAX_PAUSE_DURATION: u64 = SECONDS_PER_MONTH;

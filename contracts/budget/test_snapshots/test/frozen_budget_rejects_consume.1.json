@@ -219,6 +219,25 @@
                     },
                     {
                       "key": {
+                        "symbol": "period_seconds"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "rollover_cap"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 0
+                        }
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "rollover_credit"
                       },
                       "val": {
@@ -758,7 +777,7 @@
             ],
             "data": {
               "error": {
-                "contract": 41
+                "contract": 53
               }
             }
           }
@@ -779,7 +798,7 @@
               },
               {
                 "error": {
-                  "contract": 41
+                  "contract": 53
                 }
               }
             ],
@@ -804,7 +823,7 @@
               },
               {
                 "error": {
-                  "contract": 41
+                  "contract": 53
                 }
               }
             ],

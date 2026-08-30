@@ -198,6 +198,25 @@
                     },
                     {
                       "key": {
+                        "symbol": "period_seconds"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "rollover_cap"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 0
+                        }
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "rollover_credit"
                       },
                       "val": {
@@ -852,6 +871,39 @@
               "vec": [
                 {
                   "string": "eng"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 400
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "BudgetUpdated"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "string": "eng"
+                },
+                {
+                  "symbol": "rollover"
                 },
                 {
                   "i128": {
