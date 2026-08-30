@@ -308,17 +308,13 @@
               },
               {
                 "symbol": "register"
+              },
+              {
+                "string": "acme"
               }
             ],
             "data": {
-              "vec": [
-                {
-                  "string": "acme"
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                }
-              ]
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
             }
           }
         }

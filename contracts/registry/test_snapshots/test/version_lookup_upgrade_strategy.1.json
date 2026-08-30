@@ -479,20 +479,16 @@
               },
               {
                 "symbol": "register"
+              },
+              {
+                "u32": 0
+              },
+              {
+                "u32": 1
               }
             ],
             "data": {
-              "vec": [
-                {
-                  "u32": 0
-                },
-                {
-                  "u32": 1
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                }
-              ]
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
             }
           }
         }
@@ -572,20 +568,16 @@
               },
               {
                 "symbol": "register"
+              },
+              {
+                "u32": 0
+              },
+              {
+                "u32": 2
               }
             ],
             "data": {
-              "vec": [
-                {
-                  "u32": 0
-                },
-                {
-                  "u32": 2
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                }
-              ]
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
             }
           }
         }

@@ -59,7 +59,24 @@ pub struct Proposal {
     pub threshold: u32,
     pub approvals: u32,
     pub state: ProposalState,
+    pub created_at: u64,
     pub expires_at: u64,
+    pub grace_period: u64,
+}
+
+impl Proposal {
+    pub fn is_expired(&self, env: &Env) -> bool {
+        self.expires_at != 0 && env.ledger().timestamp() >= self.expires_at
+    }
+
+    pub fn is_active(&self, env: &Env) -> bool {
+        !self.is_expired(env)
+            && matches!(self.state, ProposalState::Pending | ProposalState::Approved)
+    }
+
+    pub fn can_execute(&self, env: &Env) -> bool {
+        self.is_active(env) && self.state == ProposalState::Approved
+    }
 }
 
 #[contracttype]
@@ -100,6 +117,7 @@ impl ProposalContract {
         approvers: Vec<Address>,
         threshold: u32,
         expires_at: u64,
+        grace_period: u64,
     ) -> Result<u64, Error> {
         proposer.require_auth();
         require_non_empty(&org)?;
@@ -132,7 +150,9 @@ impl ProposalContract {
             threshold,
             approvals: 0,
             state: ProposalState::Pending,
+            created_at: env.ledger().timestamp(),
             expires_at,
+            grace_period,
         };
         env.storage()
             .persistent()
@@ -157,7 +177,9 @@ impl ProposalContract {
     pub fn approve(env: Env, caller: Address, id: u64) -> Result<u32, Error> {
         caller.require_auth();
         let mut proposal = Self::load(&env, id)?;
-        Self::ensure_not_expired(&env, &proposal)?;
+        if proposal.is_expired(&env) {
+            return Err(Error::ProposalExpired);
+        }
         if proposal.state != ProposalState::Pending {
             return Err(Error::InvalidProposalState);
         }
@@ -215,6 +237,11 @@ impl ProposalContract {
         ) {
             return Err(Error::InvalidProposalState);
         }
+        if proposal.grace_period != 0
+            && env.ledger().timestamp() > proposal.created_at + proposal.grace_period
+        {
+            return Err(Error::CancellationWindowClosed);
+        }
         proposal.state = ProposalState::Cancelled;
         Self::store(&env, id, &proposal);
         env.events()
@@ -232,7 +259,7 @@ impl ProposalContract {
         ) {
             return Err(Error::InvalidProposalState);
         }
-        if proposal.expires_at == 0 || env.ledger().timestamp() < proposal.expires_at {
+        if !proposal.is_expired(&env) {
             return Err(Error::InvalidProposalState);
         }
         proposal.state = ProposalState::Expired;
@@ -247,7 +274,9 @@ impl ProposalContract {
     pub fn execute(env: Env, caller: Address, id: u64) -> Result<(), Error> {
         caller.require_auth();
         let mut proposal = Self::load(&env, id)?;
-        Self::ensure_not_expired(&env, &proposal)?;
+        if proposal.is_expired(&env) {
+            return Err(Error::ProposalExpired);
+        }
         if caller != proposal.proposer {
             return Err(Error::Unauthorized);
         }
@@ -302,18 +331,6 @@ impl ProposalContract {
             .persistent()
             .set(&DataKey::Proposal(id), proposal);
         Self::bump(env, id);
-    }
-
-    /// Surface [`Error::ProposalExpired`] when the deadline has passed so callers
-    /// fail safely. This deliberately does NOT persist the `Expired` state: on the
-    /// Soroban host, returning `Err` rolls back every storage write from the
-    /// invocation, so the terminal transition is recorded only through the
-    /// permissionless [`ProposalContract::expire`] entrypoint (which returns `Ok`).
-    fn ensure_not_expired(env: &Env, proposal: &Proposal) -> Result<(), Error> {
-        if proposal.expires_at != 0 && env.ledger().timestamp() >= proposal.expires_at {
-            return Err(Error::ProposalExpired);
-        }
-        Ok(())
     }
 
     fn bump(env: &Env, id: u64) {

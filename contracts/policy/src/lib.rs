@@ -52,6 +52,13 @@ enum DataKey {
     Policy(String),
     Count,
     Blacklist(Address),
+    MerchantBlacklist(Address),
+    CategoryBlacklist(String),
+    /// Per-policy asset whitelist: (policy_id, asset) -> true.
+    AssetWhitelist(String, Address),
+    /// Whether an org uses a permissive (all-assets-allowed) or restrictive
+    /// (whitelist-enforced) asset mode. Stored per policy_id.
+    AssetWhitelistEnabled(String),
 }
 
 #[contract]
@@ -69,6 +76,7 @@ impl PolicyContract {
 
     /// Register a policy. `owner` gates subsequent rotations. Cheap scalar gates
     /// are stored on-chain; the full configuration is hashed for tamper-evidence.
+    #[allow(clippy::too_many_arguments)]
     pub fn register_policy(
         env: Env,
         owner: Address,
@@ -151,6 +159,96 @@ impl PolicyContract {
         Ok(())
     }
 
+    /// Add an asset to the policy's whitelist (owner only). When the asset
+    /// whitelist is enabled for a policy, only whitelisted assets are permitted
+    /// in `check_transfer`.
+    pub fn add_asset_to_whitelist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        asset: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::AssetWhitelist(policy_id.clone(), asset.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyExists);
+        }
+        env.storage().persistent().set(&key, &true);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("asset_add")),
+            (policy_id, asset),
+        );
+        Ok(())
+    }
+
+    /// Remove an asset from the policy's whitelist (owner only).
+    pub fn remove_asset_from_whitelist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        asset: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::AssetWhitelist(policy_id.clone(), asset.clone());
+        if !env.storage().persistent().has(&key) {
+            return Err(Error::NotFound);
+        }
+        env.storage().persistent().remove(&key);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("asset_rem")),
+            (policy_id, asset),
+        );
+        Ok(())
+    }
+
+    /// Enable or disable the asset whitelist for a policy (owner only).
+    /// When enabled, only assets explicitly added via `add_asset_to_whitelist`
+    /// are permitted.
+    pub fn set_asset_whitelist_enabled(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::AssetWhitelistEnabled(policy_id);
+        env.storage().persistent().set(&key, &enabled);
+        Ok(())
+    }
+
+    /// Check whether an asset is whitelisted for a given policy.
+    /// Returns Ok(()) if allowed, or AssetNotWhitelisted if the whitelist is
+    /// enabled and the asset is not present.
+    pub fn validate_asset(env: Env, policy_id: String, asset: Address) -> Result<(), Error> {
+        let enabled_key = DataKey::AssetWhitelistEnabled(policy_id.clone());
+        let whitelist_enabled: bool = env
+            .storage()
+            .persistent()
+            .get(&enabled_key)
+            .unwrap_or(false);
+        if !whitelist_enabled {
+            return Ok(());
+        }
+        let key = DataKey::AssetWhitelist(policy_id.clone(), asset.clone());
+        if !env.storage().persistent().has(&key) {
+            events_policy_violation(&env, &policy_id, "asset_not_whitelisted");
+            return Err(Error::AssetNotWhitelisted);
+        }
+        Ok(())
+    }
+
     /// Add an address to the restricted blacklist (owner only).
     pub fn add_blacklist(
         env: Env,
@@ -199,6 +297,172 @@ impl PolicyContract {
         Ok(())
     }
 
+    /// Add a merchant address to the merchant blacklist (owner only).
+    pub fn add_merchant_blacklist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        merchant_address: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::MerchantBlacklist(merchant_address.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyExists);
+        }
+        env.storage().persistent().set(&key, &policy_id);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("merch_add")),
+            (policy_id, merchant_address),
+        );
+        Ok(())
+    }
+
+    /// Remove a merchant address from the merchant blacklist (owner only).
+    pub fn remove_merchant_blacklist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        merchant_address: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::MerchantBlacklist(merchant_address.clone());
+        if !env.storage().persistent().has(&key) {
+            return Err(Error::NotFound);
+        }
+        env.storage().persistent().remove(&key);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("merch_rem")),
+            (policy_id, merchant_address),
+        );
+        Ok(())
+    }
+
+    /// Add a spending category to the category blacklist (owner only).
+    pub fn add_category_blacklist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        category: String,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        require_non_empty(&category)?;
+        let key = DataKey::CategoryBlacklist(category.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyExists);
+        }
+        env.storage().persistent().set(&key, &policy_id);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("cat_add")),
+            (policy_id, category),
+        );
+        Ok(())
+    }
+
+    /// Remove a spending category from the category blacklist (owner only).
+    pub fn remove_category_blacklist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        category: String,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::CategoryBlacklist(category.clone());
+        if !env.storage().persistent().has(&key) {
+            return Err(Error::NotFound);
+        }
+        env.storage().persistent().remove(&key);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("cat_rem")),
+            (policy_id, category),
+        );
+        Ok(())
+    }
+
+    /// Add a recipient address to the blocklist (owner only). Blocked
+    /// addresses are rejected immediately in `check_transfer` before any
+    /// other policy gate is evaluated (Issue #32).
+    pub fn add_to_blocklist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        address: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::Blacklist(address.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyExists);
+        }
+        env.storage().persistent().set(&key, &policy_id);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("blk_add")),
+            (policy_id, address),
+        );
+        Ok(())
+    }
+
+    /// Remove a recipient address from the blocklist (owner only).
+    pub fn remove_from_blocklist(
+        env: Env,
+        caller: Address,
+        policy_id: String,
+        address: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let policy = Self::load(&env, &policy_id)?;
+        if policy.owner != caller {
+            return Err(Error::Unauthorized);
+        }
+        let key = DataKey::Blacklist(address.clone());
+        if !env.storage().persistent().has(&key) {
+            return Err(Error::NotFound);
+        }
+        env.storage().persistent().remove(&key);
+        env.events().publish(
+            (symbol_short!("policy"), symbol_short!("blk_rem")),
+            (policy_id, address),
+        );
+        Ok(())
+    }
+
+    /// Check if a spending category is restricted. Returns Ok(()) if the category
+    /// is allowed, or PolicyCategoryRestricted if it's blacklisted.
+    pub fn check_category(env: Env, policy_id: String, category: String) -> Result<(), Error> {
+        // Empty category is always allowed
+        if category.is_empty() {
+            return Ok(());
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::CategoryBlacklist(category.clone()))
+        {
+            events_policy_violation(&env, &policy_id, "category_restricted");
+            return Err(Error::PolicyCategoryRestricted);
+        }
+        Ok(())
+    }
+
     // --- views ---
 
     pub fn get(env: Env, policy_id: String) -> Result<Policy, Error> {
@@ -219,6 +483,10 @@ impl PolicyContract {
 #[contractimpl]
 impl PolicyInterface for PolicyContract {
     /// Evaluate a transfer request against the named policy. All gates must pass.
+    ///
+    /// Blocklist checks run **first** so that compromised or malicious
+    /// addresses are rejected immediately, before any allowance, asset or
+    /// amount evaluation (Issue #32).
     fn check_transfer(
         env: Env,
         policy_id: String,
@@ -232,6 +500,24 @@ impl PolicyInterface for PolicyContract {
             events_policy_violation(&env, &policy_id, "disabled");
             return Err(Error::PolicyDenied);
         }
+        // --- Blocklist checks (Issue #32) — evaluated first ---
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Blacklist(recipient.clone()))
+        {
+            events_policy_violation(&env, &policy_id, "blacklisted");
+            return Err(Error::PolicyRecipientRestricted);
+        }
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::MerchantBlacklist(recipient.clone()))
+        {
+            events_policy_violation(&env, &policy_id, "merchant_blocked");
+            return Err(Error::PolicyMerchantBlocked);
+        }
+        // --- Allowance / amount gates ---
         if policy.expires_at != 0 && env.ledger().timestamp() >= policy.expires_at {
             events_policy_violation(&env, &policy_id, "expired");
             return Err(Error::PolicyDenied);
@@ -252,6 +538,8 @@ impl PolicyInterface for PolicyContract {
                 return Err(Error::PolicyDenied);
             }
         }
+        // Check asset whitelist (Issue #37)
+        Self::validate_asset(env.clone(), policy_id.clone(), asset.clone())?;
         // Check blacklist
         if env
             .storage()
@@ -260,6 +548,15 @@ impl PolicyInterface for PolicyContract {
         {
             events_policy_violation(&env, &policy_id, "blacklisted");
             return Err(Error::PolicyRecipientRestricted);
+        }
+        // Check merchant blacklist
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::MerchantBlacklist(recipient.clone()))
+        {
+            events_policy_violation(&env, &policy_id, "merchant_blocked");
+            return Err(Error::PolicyMerchantBlocked);
         }
         Ok(())
     }

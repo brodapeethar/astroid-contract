@@ -49,6 +49,7 @@ name = "astroid-escrow"
 version = "0.1.0"
 dependencies = [
  "astroid-shared",
+ "ed25519-dalek",
  "soroban-sdk",
 ]
 

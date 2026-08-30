@@ -2,3 +2,4 @@
 **/*.rs.bk
 *.rs.bk
 .cargo/
+**/test_snapshots/

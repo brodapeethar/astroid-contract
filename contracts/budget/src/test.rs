@@ -399,3 +399,115 @@ fn get_missing_budget_fails_not_found() {
     let res = h.client.try_get(&id(&h.env, "nope"));
     assert_eq!(res, Err(Ok(Error::NotFound)));
 }
+
+// --- Issue #35: Deficit carryforward tests ---
+
+#[test]
+fn deficit_carryforward_allows_overspend() {
+    let h = setup();
+    h.client.allocate_with_deficit(
+        &h.owner,
+        &id(&h.env, "eng"),
+        &1_000,
+        &Period::Weekly,
+        &true,
+        &true, // allow_deficit
+        &0,
+    );
+    // Spend beyond the limit — deficit allowed.
+    let rem = h.client.consume(&h.owner, &id(&h.env, "eng"), &1_200);
+    assert_eq!(rem, -200); // negative remaining = deficit
+    let b: Budget = h.client.get(&id(&h.env, "eng"));
+    assert!(b.allow_deficit);
+    assert_eq!(b.spent, 1_200);
+}
+
+#[test]
+fn deficit_carryforward_reduces_next_period() {
+    let h = setup();
+    h.client.allocate_with_deficit(
+        &h.owner,
+        &id(&h.env, "eng"),
+        &1_000,
+        &Period::Weekly,
+        &true,
+        &true, // allow_deficit
+        &0,
+    );
+    // Spend 1200 (200 over limit)
+    h.client.consume(&h.owner, &id(&h.env, "eng"), &1_200);
+    // Advance past the weekly window
+    h.env.ledger().set_timestamp(1_000 + 604_800);
+    // Call remaining to trigger window transition and persist the rollover state
+    // Use rollover to trigger the window transition explicitly
+    h.client.rollover(&h.owner, &id(&h.env, "eng"));
+    let b: Budget = h.client.get(&id(&h.env, "eng"));
+    assert_eq!(b.window_start, 1_000 + 604_800);
+    assert_eq!(b.deficit_amount, 200);
+    assert_eq!(b.spent, 0);
+    // effective_capacity = limit (1000) - deficit (200) = 800
+    assert_eq!(h.client.remaining(&id(&h.env, "eng")), 800);
+    // Can spend up to 800 (1000 - 200 deficit)
+    let rem = h.client.consume(&h.owner, &id(&h.env, "eng"), &800);
+    assert_eq!(rem, 0);
+    // One more unit should fail since effective capacity is exhausted
+    let res = h.client.try_consume(&h.owner, &id(&h.env, "eng"), &1);
+    assert_eq!(res, Err(Ok(Error::BudgetExceeded)));
+}
+
+#[test]
+fn deficit_not_allowed_rejects_overspend() {
+    let h = setup();
+    h.client.allocate(
+        &h.owner,
+        &id(&h.env, "eng"),
+        &1_000,
+        &Period::Weekly,
+        &true,
+        &0,
+    );
+    // Spending beyond limit should fail without allow_deficit
+    let res = h.client.try_consume(&h.owner, &id(&h.env, "eng"), &1_200);
+    assert_eq!(res, Err(Ok(Error::BudgetExceeded)));
+}
+
+#[test]
+fn deficit_without_period_rejected() {
+    let h = setup();
+    // Deficit carryforward requires a recurring period
+    let res = h.client.try_allocate_with_deficit(
+        &h.owner,
+        &id(&h.env, "eng"),
+        &1_000,
+        &Period::None,
+        &false,
+        &true, // allow_deficit
+        &0,
+    );
+    assert_eq!(res, Err(Ok(Error::InvalidInput)));
+}
+
+#[test]
+fn deficit_surplus_rollover_combined() {
+    let h = setup();
+    h.client.allocate_with_deficit(
+        &h.owner,
+        &id(&h.env, "eng"),
+        &1_000,
+        &Period::Weekly,
+        &true,
+        &true, // allow_deficit
+        &0,
+    );
+    // Spend only 600 — surplus of 400
+    h.client.consume(&h.owner, &id(&h.env, "eng"), &600);
+    h.env.ledger().set_timestamp(1_000 + 604_800);
+    // Call remaining to trigger window transition and persist rollover state
+    let rem = h.client.remaining(&id(&h.env, "eng"));
+    assert_eq!(rem, 1_400);
+    // After rollover: deficit=0, rollover_credit=400, spent=0
+    let b: Budget = h.client.get(&id(&h.env, "eng"));
+    assert_eq!(b.deficit_amount, 0);
+    assert_eq!(b.rollover_credit, 400);
+    assert_eq!(b.spent, 0);
+}

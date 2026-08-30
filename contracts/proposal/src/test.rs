@@ -52,6 +52,7 @@ fn create(h: &Harness, threshold: u32, expires_at: u64) -> u64 {
         &approver_vec(h),
         &threshold,
         &expires_at,
+        &0,
     )
 }
 
@@ -167,6 +168,7 @@ fn create_with_bad_threshold_fails() {
         &approver_vec(&h),
         &3,
         &5_000,
+        &0,
     );
     assert_eq!(res, Err(Ok(Error::InvalidThreshold)));
 }
@@ -183,6 +185,49 @@ fn create_with_past_expiry_fails() {
         &approver_vec(&h),
         &1,
         &500, // in the past (now = 1000)
+        &0,
     );
     assert_eq!(res, Err(Ok(Error::InvalidInput)));
+}
+
+#[test]
+fn test_cancellation_grace_window() {
+    let h = setup(3);
+    h.env.ledger().set_timestamp(100);
+    let id = h.client.create(
+        &h.proposer,
+        &String::from_str(&h.env, "org"),
+        &String::from_str(&h.env, "w1"),
+        &String::from_str(&h.env, "p1"),
+        &String::from_str(&h.env, "tx1"),
+        &approver_vec(&h),
+        &2,
+        &0,
+        &50, // 50 seconds grace period
+    );
+
+    // Fast forward 51 seconds
+    h.env.ledger().set_timestamp(151);
+
+    // Cancel should fail
+    let res = h.client.try_cancel(&h.proposer, &id);
+    assert_eq!(res, Err(Ok(Error::CancellationWindowClosed)));
+
+    // Create a new one and cancel inside window
+    let id2 = h.client.create(
+        &h.proposer,
+        &String::from_str(&h.env, "org"),
+        &String::from_str(&h.env, "w1"),
+        &String::from_str(&h.env, "p1"),
+        &String::from_str(&h.env, "tx1"),
+        &approver_vec(&h),
+        &2,
+        &0,
+        &50,
+    );
+
+    h.env.ledger().set_timestamp(160);
+    h.client.cancel(&h.proposer, &id2); // works since 160 < 151 + 50 (created at 151)
+
+    assert_eq!(h.client.state(&id2), crate::ProposalState::Cancelled);
 }

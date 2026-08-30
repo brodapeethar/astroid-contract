@@ -30,6 +30,10 @@ pub enum Error {
     PolicyHashMismatch = 21,
     EmergencyLock = 22,
     PolicyRecipientRestricted = 23,
+    PolicyMerchantBlocked = 24,
+    PolicyCategoryRestricted = 25,
+    /// The asset is not in the organization's whitelist.
+    AssetNotWhitelisted = 26,
 
     // --- Registry (30-39) ---
     RegistryFrozen = 30,
@@ -70,6 +74,9 @@ pub enum Error {
     InvalidProposalState = 71,
     ProposalNotApproved = 72,
     NotAnApprover = 73,
+    CancellationWindowClosed = 74,
+    MathOverflow = 75,
+    DivisionByZero = 76,
 
     // --- Escrow (80-89) ---
     ConditionNotMet = 80,

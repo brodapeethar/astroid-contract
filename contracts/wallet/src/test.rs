@@ -1,7 +1,8 @@
 #![cfg(test)]
 extern crate std;
 
-use crate::{WalletAction, WalletContract, WalletContractClient};
+use crate::access::Role;
+use crate::{WalletContract, WalletContractClient};
 use astroid_shared::errors::Error;
 use astroid_shared::types::{ModuleKind, ResourceState};
 use soroban_sdk::testutils::Address as _;
@@ -324,4 +325,262 @@ fn standard_events_emitted() {
 
     h.client.freeze(&owner, &id);
     assert_event(&h.env, "WalletStateChanged");
+}
+
+// ---------------------------------------------------------------------------
+// Role-based access control
+// ---------------------------------------------------------------------------
+
+/// A wallet funded with `amount`, plus its owner.
+fn funded_wallet(h: &Harness, amount: i128) -> (Address, u64) {
+    let owner = Address::generate(&h.env);
+    let id = h.client.create_wallet(&owner);
+    mint(h, &owner, amount);
+    h.client.deposit(&id, &owner, &h.token, &amount);
+    (owner, id)
+}
+
+#[test]
+fn owner_is_implicitly_admin() {
+    let h = setup();
+    let owner = Address::generate(&h.env);
+    let id = h.client.create_wallet(&owner);
+
+    assert_eq!(h.client.get_role(&id, &owner), Some(Role::Admin));
+    assert!(h.client.has_role(&id, &owner, &Role::Admin));
+    assert!(h.client.has_role(&id, &owner, &Role::Agent));
+
+    // A stranger holds nothing at all.
+    let stranger = Address::generate(&h.env);
+    assert_eq!(h.client.get_role(&id, &stranger), None);
+    assert!(!h.client.has_role(&id, &stranger, &Role::Auditor));
+}
+
+#[test]
+fn granted_role_is_readable_and_revocable() {
+    let h = setup();
+    let (owner, id) = funded_wallet(&h, 100);
+    let agent = Address::generate(&h.env);
+
+    h.client.grant_role(&owner, &id, &agent, &Role::Agent);
+    assert_eq!(h.client.get_role(&id, &agent), Some(Role::Agent));
+
+    // Re-granting replaces the role rather than stacking.
+    h.client.grant_role(&owner, &id, &agent, &Role::Auditor);
+    assert_eq!(h.client.get_role(&id, &agent), Some(Role::Auditor));
+
+    h.client.revoke_role(&owner, &id, &agent);
+    assert_eq!(h.client.get_role(&id, &agent), None);
+
+    // Revoking again is an explicit failure, not a silent no-op.
+    assert_eq!(
+        h.client.try_revoke_role(&owner, &id, &agent),
+        Err(Ok(Error::NotFound))
+    );
+}
+
+#[test]
+fn agent_can_transfer_but_not_withdraw() {
+    let h = setup();
+    let (owner, id) = funded_wallet(&h, 1_000);
+    let agent = Address::generate(&h.env);
+    let recipient = Address::generate(&h.env);
+    h.client.grant_role(&owner, &id, &agent, &Role::Agent);
+
+    // Routine operational spend: permitted.
+    h.client.transfer(&agent, &id, &recipient, &h.token, &250);
+    assert_eq!(token_balance(&h, &recipient), 250);
+    assert_eq!(h.client.balance(&id, &h.token), 750);
+
+    // Withdrawing funds to the owner is administrative: refused.
+    assert_eq!(
+        h.client.try_withdraw(&agent, &id, &h.token, &100),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(h.client.balance(&id, &h.token), 750);
+}
+
+#[test]
+fn agent_cannot_administer_lifecycle_or_roles() {
+    let h = setup();
+    let (owner, id) = funded_wallet(&h, 100);
+    let agent = Address::generate(&h.env);
+    let outsider = Address::generate(&h.env);
+    h.client.grant_role(&owner, &id, &agent, &Role::Agent);
+
+    assert_eq!(
+        h.client.try_pause(&agent, &id),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        h.client.try_archive(&agent, &id),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        h.client
+            .try_grant_role(&agent, &id, &outsider, &Role::Agent),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        h.client.try_revoke_role(&agent, &id, &agent),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    // None of the rejected calls changed anything.
+    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Active);
+    assert_eq!(h.client.get_role(&id, &outsider), None);
+    assert_eq!(h.client.get_role(&id, &agent), Some(Role::Agent));
+}
+
+#[test]
+fn agent_may_freeze_as_a_safety_action() {
+    let h = setup();
+    let (owner, id) = funded_wallet(&h, 100);
+    let agent = Address::generate(&h.env);
+    h.client.grant_role(&owner, &id, &agent, &Role::Agent);
+
+    h.client.freeze(&agent, &id);
+    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Frozen);
+    h.client.unfreeze(&agent, &id);
+    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Active);
+}
+
+#[test]
+fn auditor_holds_no_mutating_power() {
+    let h = setup();
+    let (owner, id) = funded_wallet(&h, 1_000);
+    let auditor = Address::generate(&h.env);
+    let recipient = Address::generate(&h.env);
+    h.client.grant_role(&owner, &id, &auditor, &Role::Auditor);
+
+    // The role is recorded and readable...
+    assert_eq!(h.client.get_role(&id, &auditor), Some(Role::Auditor));
+    assert!(h.client.has_role(&id, &auditor, &Role::Auditor));
+    // ...but satisfies no guard on a mutating entrypoint.
+    assert!(!h.client.has_role(&id, &auditor, &Role::Agent));
+    assert_eq!(
+        h.client
+            .try_transfer(&auditor, &id, &recipient, &h.token, &10),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        h.client.try_withdraw(&auditor, &id, &h.token, &10),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        h.client.try_freeze(&auditor, &id),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(token_balance(&h, &recipient), 0);
+    assert_eq!(h.client.balance(&id, &h.token), 1_000);
+}
+
+#[test]
+fn delegated_admin_has_full_control() {
+    let h = setup();
+    let (owner, id) = funded_wallet(&h, 1_000);
+    let manager = Address::generate(&h.env);
+    let agent = Address::generate(&h.env);
+    h.client.grant_role(&owner, &id, &manager, &Role::Admin);
+
+    // A delegated admin may withdraw - and the funds still go to the owner.
+    h.client.withdraw(&manager, &id, &h.token, &400);
+    assert_eq!(token_balance(&h, &owner), 400);
+    assert_eq!(h.client.balance(&id, &h.token), 600);
+
+    // ...and may administer roles in turn.
+    h.client.grant_role(&manager, &id, &agent, &Role::Agent);
+    assert_eq!(h.client.get_role(&id, &agent), Some(Role::Agent));
+
+    // ...and lifecycle.
+    h.client.pause(&manager, &id);
+    assert_eq!(h.client.get_wallet(&id).state, ResourceState::Paused);
+}
+
+#[test]
+fn revoked_agent_loses_access_immediately() {
+    let h = setup();
+    let (owner, id) = funded_wallet(&h, 1_000);
+    let agent = Address::generate(&h.env);
+    let recipient = Address::generate(&h.env);
+    h.client.grant_role(&owner, &id, &agent, &Role::Agent);
+    h.client.transfer(&agent, &id, &recipient, &h.token, &100);
+
+    h.client.revoke_role(&owner, &id, &agent);
+    assert_eq!(
+        h.client
+            .try_transfer(&agent, &id, &recipient, &h.token, &100),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(token_balance(&h, &recipient), 100);
+}
+
+#[test]
+fn roles_do_not_leak_between_wallets() {
+    let h = setup();
+    let (owner_a, wallet_a) = funded_wallet(&h, 500);
+    let (_owner_b, wallet_b) = funded_wallet(&h, 500);
+    let agent = Address::generate(&h.env);
+    let recipient = Address::generate(&h.env);
+
+    h.client
+        .grant_role(&owner_a, &wallet_a, &agent, &Role::Agent);
+
+    h.client
+        .transfer(&agent, &wallet_a, &recipient, &h.token, &50);
+    assert_eq!(
+        h.client
+            .try_transfer(&agent, &wallet_b, &recipient, &h.token, &50),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(h.client.get_role(&wallet_b, &agent), None);
+}
+
+#[test]
+fn owner_cannot_be_assigned_a_role() {
+    let h = setup();
+    let owner = Address::generate(&h.env);
+    let id = h.client.create_wallet(&owner);
+
+    // The owner is implicitly Admin; a demotion attempt is refused outright
+    // rather than recorded and then ignored by the guards.
+    assert_eq!(
+        h.client.try_grant_role(&owner, &id, &owner, &Role::Auditor),
+        Err(Ok(Error::InvalidInput))
+    );
+    assert_eq!(h.client.get_role(&id, &owner), Some(Role::Admin));
+}
+
+#[test]
+fn role_checks_report_unknown_wallets_as_not_found() {
+    let h = setup();
+    let account = Address::generate(&h.env);
+    assert_eq!(
+        h.client.try_get_role(&999, &account),
+        Err(Ok(Error::NotFound))
+    );
+    assert_eq!(
+        h.client
+            .try_grant_role(&account, &999, &account, &Role::Agent),
+        Err(Ok(Error::NotFound))
+    );
+}
+
+#[test]
+fn granting_on_an_archived_wallet_is_refused() {
+    let h = setup();
+    let owner = Address::generate(&h.env);
+    let id = h.client.create_wallet(&owner);
+    let agent = Address::generate(&h.env);
+    h.client.grant_role(&owner, &id, &agent, &Role::Agent);
+    h.client.archive(&owner, &id);
+
+    let other = Address::generate(&h.env);
+    assert_eq!(
+        h.client.try_grant_role(&owner, &id, &other, &Role::Agent),
+        Err(Ok(Error::WalletArchived))
+    );
+    // Revocation still works so stale grants can be cleaned up.
+    h.client.revoke_role(&owner, &id, &agent);
+    assert_eq!(h.client.get_role(&id, &agent), None);
 }
