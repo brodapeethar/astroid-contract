@@ -4,6 +4,7 @@ extern crate std;
 use crate::{BatchCall, GovernanceChange, MultiSigContract, MultiSigContractClient, SignerWeight};
 use astroid_shared::constants::{
     GOVERNANCE_GRACE_PERIOD, MAX_BATCH_CALLS, MAX_TIMELOCK_DELAY, MIN_TIMELOCK_DELAY,
+    THRESHOLD_CHANGE_DELAY_LEDGERS,
 };
 use astroid_shared::errors::Error;
 use soroban_sdk::testutils::{Address as _, AuthorizedFunction, Events, Ledger};
@@ -359,6 +360,49 @@ fn matured_change_expires_after_the_grace_period() {
 }
 
 #[test]
+fn set_threshold_stores_pending_change() {
+    let h = setup(&[1, 1, 1], 2);
+    h.env.ledger().set_sequence_number(100);
+    h.client.set_threshold(&h.signers[0], &3);
+    // Threshold is not yet changed.
+    assert_eq!(h.client.get_threshold(), 2);
+    let pending = h.client.get_pending_threshold();
+    assert_eq!(pending.new_threshold, 3);
+    assert_eq!(pending.effective_from, 100);
+}
+
+#[test]
+fn set_threshold_same_value_fails() {
+    let h = setup(&[1, 1, 1], 2);
+    let res = h.client.try_set_threshold(&h.signers[0], &2);
+    assert_eq!(res, Err(Ok(Error::InvalidThreshold)));
+}
+
+#[test]
+fn set_threshold_bounds_enforced() {
+    let h = setup(&[1, 1, 1], 2);
+    // Threshold larger than signer count is rejected.
+    let res = h.client.try_set_threshold(&h.signers[0], &4);
+    assert_eq!(res, Err(Ok(Error::InvalidThreshold)));
+    // Threshold of 0 is rejected (below MIN_THRESHOLD).
+    let res = h.client.try_set_threshold(&h.signers[0], &0);
+    assert_eq!(res, Err(Ok(Error::InvalidThreshold)));
+}
+
+#[test]
+fn finalize_threshold_before_delay_fails() {
+    let h = setup(&[1, 1, 1], 2);
+    h.env.ledger().set_sequence_number(100);
+    h.client.set_threshold(&h.signers[0], &3);
+    // Try to finalize immediately — not enough ledgers have passed.
+    let res = h.client.try_finalize_threshold(&h.signers[0]);
+    assert_eq!(res, Err(Ok(Error::TimelockNotExpired)));
+    // Threshold unchanged.
+
+    assert_eq!(h.client.get_threshold(), 2);
+}
+
+#[test]
 fn cancellation_still_works_while_emergency_locked() {
     let h = setup(&[1, 1, 1], 2);
     let id = h.client.propose_threshold_change(&h.signers[0], &3);
@@ -434,6 +478,19 @@ fn threshold_bounds_enforced_at_proposal_time() {
 }
 
 #[test]
+fn finalize_threshold_after_delay_succeeds() {
+    let h = setup(&[1, 1, 1], 2);
+    h.env.ledger().set_sequence_number(100);
+    h.client.set_threshold(&h.signers[0], &3);
+    // Advance past the delay.
+    h.env
+        .ledger()
+        .set_sequence_number(100 + THRESHOLD_CHANGE_DELAY_LEDGERS);
+    h.client.finalize_threshold(&h.signers[0]);
+    assert_eq!(h.client.get_threshold(), 3);
+}
+
+#[test]
 fn execution_revalidates_against_live_state() {
     // Weights 2, 1, 1 (total 4) with threshold 2.
     let h = setup(&[2, 1, 1], 2);
@@ -457,6 +514,66 @@ fn execution_revalidates_against_live_state() {
         Err(Ok(Error::InvalidThreshold))
     );
     assert!(h.client.is_signer(&h.signers[0]));
+}
+
+#[test]
+fn finalize_threshold_no_pending_fails() {
+    let h = setup(&[1, 1, 1], 2);
+    let res = h.client.try_finalize_threshold(&h.signers[0]);
+    assert_eq!(res, Err(Ok(Error::NotFound)));
+}
+
+#[test]
+fn set_threshold_overwrites_pending_change() {
+    let h = setup(&[1, 1, 1], 2);
+    h.env.ledger().set_sequence_number(100);
+    h.client.set_threshold(&h.signers[0], &3);
+    // Change mind before finalization.
+    h.env.ledger().set_sequence_number(150);
+    h.client.set_threshold(&h.signers[0], &1);
+    let pending = h.client.get_pending_threshold();
+    assert_eq!(pending.new_threshold, 1);
+    assert_eq!(pending.effective_from, 150);
+    // Finalize the new pending change after the delay.
+    h.env
+        .ledger()
+        .set_sequence_number(150 + THRESHOLD_CHANGE_DELAY_LEDGERS);
+    h.client.finalize_threshold(&h.signers[0]);
+    assert_eq!(h.client.get_threshold(), 1);
+}
+
+#[test]
+fn non_signer_cannot_set_or_finalize_threshold() {
+    let h = setup(&[1, 1, 1], 2);
+    let stranger = Address::generate(&h.env);
+    assert_eq!(
+        h.client.try_set_threshold(&stranger, &3),
+        Err(Ok(Error::NotASigner))
+    );
+    assert_eq!(
+        h.client.try_finalize_threshold(&stranger),
+        Err(Ok(Error::NotASigner))
+    );
+}
+
+#[test]
+fn non_signer_cannot_change_config() {
+    let h = setup(&[1, 1, 1], 2);
+    let stranger = Address::generate(&h.env);
+    let extra = Address::generate(&h.env);
+    assert_eq!(
+        h.client.try_set_threshold(&stranger, &3),
+        Err(Ok(Error::NotASigner))
+    );
+    assert_eq!(
+        h.client.try_finalize_threshold(&stranger),
+        Err(Ok(Error::NotASigner))
+    );
+    assert_eq!(
+        h.client
+            .try_execute_threshold_change(&stranger, &1),
+        Err(Ok(Error::UnauthorizedModification))
+    );
 }
 
 #[test]

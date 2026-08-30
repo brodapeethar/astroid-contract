@@ -55,7 +55,7 @@
 use astroid_shared::constants::{
     GOVERNANCE_GRACE_PERIOD, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, MAX_BATCH_CALLS,
     MAX_SIGNERS, MAX_TIMELOCK_DELAY, MIN_THRESHOLD, MIN_TIMELOCK_DELAY, PERSISTENT_BUMP_AMOUNT,
-    PERSISTENT_LIFETIME_THRESHOLD,
+    PERSISTENT_LIFETIME_THRESHOLD, THRESHOLD_CHANGE_DELAY_LEDGERS,
 };
 use astroid_shared::errors::Error;
 use astroid_shared::math::{checked_add, checked_sub};
@@ -88,6 +88,8 @@ enum DataKey {
     ChangeCount,
     /// State: pending governance change by id (persistent).
     Change(u64),
+    /// Pending threshold change awaiting finalization.
+    PendingThreshold,
 }
 
 /// A registered signer and its positive voting weight.
@@ -96,6 +98,15 @@ enum DataKey {
 pub struct SignerWeight {
     pub address: Address,
     pub weight: u32,
+}
+
+/// A pending threshold change that must wait a delay before finalization.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingThresholdChange {
+    pub new_threshold: u32,
+    /// Ledger sequence when the change was submitted.
+    pub effective_from: u32,
 }
 
 /// Internal multisig proposal. `action`/`payload` describe the intended change
@@ -210,6 +221,119 @@ impl MultiSigContract {
         env.storage()
             .instance()
             .set(&DataKey::TimelockDelay, &MIN_TIMELOCK_DELAY);
+        Self::bump_instance(&env);
+        Ok(())
+    }
+
+    /// Add a signer. Signer-gated. Rejects duplicates, zero weights, and
+    /// over-capacity signer sets.
+    pub fn add_signer(
+        env: Env,
+        caller: Address,
+        signer: Address,
+        weight: u32,
+    ) -> Result<(), Error> {
+        Self::require_signer(&env, &caller)?;
+        if weight == 0 {
+            return Err(Error::InvalidSignerWeight);
+        }
+        let mut signers = Self::signers(&env)?;
+        if signers.iter().any(|s| s.address == signer) {
+            return Err(Error::AlreadyExists);
+        }
+        if signers.len() >= MAX_SIGNERS {
+            return Err(Error::TooManySigners);
+        }
+        signers.push_back(SignerWeight {
+            address: signer.clone(),
+            weight,
+        });
+        env.storage().instance().set(&DataKey::Signers, &signers);
+        Self::bump_instance(&env);
+        env.events().publish(
+            (symbol_short!("signer"), symbol_short!("added")),
+            (signer, weight),
+        );
+        Ok(())
+    }
+
+    /// Remove a signer. Signer-gated. Refuses to drop below the threshold or to
+    /// empty the set, so the multisig can never become unusable.
+    pub fn remove_signer(env: Env, caller: Address, signer: Address) -> Result<(), Error> {
+        Self::require_signer(&env, &caller)?;
+        let mut signers = Self::signers(&env)?;
+        let threshold = Self::threshold(&env)?;
+        let idx = Self::index_of(&signers, &signer)?;
+        let remaining_total = Self::total_weight(&signers)? - signers.get(idx).unwrap().weight;
+        if remaining_total < threshold {
+            return Err(Error::InvalidThreshold);
+        }
+        signers.remove(idx);
+        env.storage().instance().set(&DataKey::Signers, &signers);
+        Self::bump_instance(&env);
+        env.events().publish(
+            (symbol_short!("signer"), symbol_short!("removed")),
+            signer,
+        );
+        Ok(())
+    }
+
+    /// Propose a pending threshold change. Signer-gated. Must stay within
+    /// `[MIN_THRESHOLD, signers.len()]`. The change is stored but not applied
+    /// until [`finalize_threshold`] is called after the grace period.
+    pub fn set_threshold(env: Env, caller: Address, threshold: u32) -> Result<(), Error> {
+        Self::require_signer(&env, &caller)?;
+        let signers = Self::signers(&env)?;
+        Self::validate_threshold(threshold, Self::total_weight(&signers)?)?;
+
+        let current = Self::threshold(&env)?;
+        if current == threshold {
+            return Err(Error::InvalidThreshold);
+        }
+
+        let pending = PendingThresholdChange {
+            new_threshold: threshold,
+            effective_from: env.ledger().sequence(),
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingThreshold, &pending);
+        Self::bump_instance(&env);
+        env.events().publish(
+            (symbol_short!("threshold"), symbol_short!("pending")),
+            (threshold, env.ledger().sequence()),
+        );
+        Ok(())
+    }
+
+    /// Finalize a pending threshold change. The change only takes effect after
+    /// at least [`THRESHOLD_CHANGE_DELAY_LEDGERS`] ledgers have passed since
+    /// the change was submitted via [`set_threshold`].
+    pub fn finalize_threshold(env: Env, caller: Address) -> Result<(), Error> {
+        Self::require_signer(&env, &caller)?;
+
+        let pending: PendingThresholdChange = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingThreshold)
+            .ok_or(Error::NotFound)?;
+
+        let current_sequence = env.ledger().sequence();
+        let elapsed = current_sequence
+            .checked_sub(pending.effective_from)
+            .ok_or(Error::TimelockNotExpired)?;
+        if elapsed < THRESHOLD_CHANGE_DELAY_LEDGERS {
+            return Err(Error::TimelockNotExpired);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Threshold, &pending.new_threshold);
+        env.storage().instance().remove(&DataKey::PendingThreshold);
+        env.events().publish(
+            (symbol_short!("threshold"), symbol_short!("changed")),
+            pending.new_threshold,
+        );
         Self::bump_instance(&env);
         Ok(())
     }
@@ -594,6 +718,13 @@ impl MultiSigContract {
 
     pub fn get_threshold(env: Env) -> Result<u32, Error> {
         Self::threshold(&env)
+    }
+
+    pub fn get_pending_threshold(env: Env) -> Result<PendingThresholdChange, Error> {
+        env.storage()
+            .instance()
+            .get(&DataKey::PendingThreshold)
+            .ok_or(Error::NotFound)
     }
 
     pub fn is_signer(env: Env, who: Address) -> bool {

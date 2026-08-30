@@ -53,6 +53,7 @@ pub trait BudgetInterface {
     /// Debit `amount` from the budget's remaining allocation. `caller` must be
     /// the authorized consumer (the treasury/owner). Returns the new remaining.
     fn consume(env: Env, caller: Address, budget_id: String, amount: i128) -> Result<i128, Error>;
+    fn release(env: Env, caller: Address, budget_id: String, amount: i128) -> Result<i128, Error>;
 
     /// Read the remaining allocation for a budget.
     fn remaining(env: Env, budget_id: String) -> Result<i128, Error>;

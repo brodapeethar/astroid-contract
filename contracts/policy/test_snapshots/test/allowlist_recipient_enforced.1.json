@@ -50,7 +50,15 @@
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
-                "void",
+                {
+                  "vec": []
+                },
+                {
+                  "u64": 0
+                },
+                {
+                  "u64": 0
+                },
                 {
                   "u64": 0
                 }
@@ -179,9 +187,11 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "allowed_asset"
+                        "symbol": "allowed_assets"
                       },
-                      "val": "void"
+                      "val": {
+                        "vec": []
+                      }
                     },
                     {
                       "key": {
@@ -429,7 +439,15 @@
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
-                "void",
+                {
+                  "vec": []
+                },
+                {
+                  "u64": 0
+                },
+                {
+                  "u64": 0
+                },
                 {
                   "u64": 0
                 }

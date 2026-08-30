@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 4,
+    "address": 5,
     "nonce": 0
   },
   "auth": [
@@ -45,36 +45,12 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "ChangeCount"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "u64": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
                               "symbol": "EmergencyLock"
                             }
                           ]
                         },
                         "val": {
                           "bool": false
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "LastBatchNonce"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "u64": 0
                         }
                       },
                       {
@@ -100,64 +76,13 @@
                         "val": {
                           "vec": [
                             {
-                              "map": [
-                                {
-                                  "key": {
-                                    "symbol": "address"
-                                  },
-                                  "val": {
-                                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "weight"
-                                  },
-                                  "val": {
-                                    "u32": 1
-                                  }
-                                }
-                              ]
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                             },
                             {
-                              "map": [
-                                {
-                                  "key": {
-                                    "symbol": "address"
-                                  },
-                                  "val": {
-                                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "weight"
-                                  },
-                                  "val": {
-                                    "u32": 1
-                                  }
-                                }
-                              ]
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                             },
                             {
-                              "map": [
-                                {
-                                  "key": {
-                                    "symbol": "address"
-                                  },
-                                  "val": {
-                                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                                  }
-                                },
-                                {
-                                  "key": {
-                                    "symbol": "weight"
-                                  },
-                                  "val": {
-                                    "u32": 1
-                                  }
-                                }
-                              ]
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                             }
                           ]
                         }
@@ -172,18 +97,6 @@
                         },
                         "val": {
                           "u32": 2
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "TimelockDelay"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "u64": 86400
                         }
                       }
                     ]
@@ -243,64 +156,13 @@
                 {
                   "vec": [
                     {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "address"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "weight"
-                          },
-                          "val": {
-                            "u32": 1
-                          }
-                        }
-                      ]
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                     },
                     {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "address"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "weight"
-                          },
-                          "val": {
-                            "u32": 1
-                          }
-                        }
-                      ]
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                     },
                     {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "address"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "weight"
-                          },
-                          "val": {
-                            "u32": 1
-                          }
-                        }
-                      ]
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                     }
                   ]
                 },
@@ -356,10 +218,10 @@
             "data": {
               "vec": [
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "u32": 4
+                  "u32": 3
                 }
               ]
             }
@@ -385,7 +247,7 @@
             ],
             "data": {
               "error": {
-                "contract": 64
+                "contract": 63
               }
             }
           }
@@ -406,7 +268,7 @@
               },
               {
                 "error": {
-                  "contract": 64
+                  "contract": 63
                 }
               }
             ],
@@ -431,7 +293,7 @@
               },
               {
                 "error": {
-                  "contract": 64
+                  "contract": 63
                 }
               }
             ],
@@ -446,10 +308,10 @@
                 {
                   "vec": [
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                     },
                     {
-                      "u32": 4
+                      "u32": 3
                     }
                   ]
                 }
@@ -475,18 +337,11 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "set_threshold"
+                "symbol": "finalize_threshold"
               }
             ],
             "data": {
-              "vec": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "u32": 0
-                }
-              ]
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
             }
           }
         }
@@ -505,12 +360,12 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "set_threshold"
+                "symbol": "finalize_threshold"
               }
             ],
             "data": {
               "error": {
-                "contract": 64
+                "contract": 63
               }
             }
           }
@@ -531,7 +386,7 @@
               },
               {
                 "error": {
-                  "contract": 64
+                  "contract": 63
                 }
               }
             ],
@@ -556,7 +411,7 @@
               },
               {
                 "error": {
-                  "contract": 64
+                  "contract": 63
                 }
               }
             ],
@@ -566,15 +421,12 @@
                   "string": "contract try_call failed"
                 },
                 {
-                  "symbol": "set_threshold"
+                  "symbol": "finalize_threshold"
                 },
                 {
                   "vec": [
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                    },
-                    {
-                      "u32": 0
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                     }
                   ]
                 }

@@ -58,3 +58,7 @@ pub const MAX_ESCROW_ASSETS: u32 = 10;
 /// Caps `pause(duration)` so an authorized admin cannot lock policy evaluation
 /// indefinitely; indefinite pauses must go through `unpause` explicitly.
 pub const MAX_PAUSE_DURATION: u64 = SECONDS_PER_MONTH;
+
+/// Minimum number of ledgers that must pass before a pending multisig
+/// threshold change can be finalized (~1 day on Stellar).
+pub const THRESHOLD_CHANGE_DELAY_LEDGERS: u32 = DAY_IN_LEDGERS;

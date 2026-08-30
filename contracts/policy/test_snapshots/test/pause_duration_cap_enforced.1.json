@@ -48,7 +48,15 @@
                   }
                 },
                 "void",
-                "void",
+                {
+                  "vec": []
+                },
+                {
+                  "u64": 0
+                },
+                {
+                  "u64": 0
+                },
                 {
                   "u64": 0
                 }
@@ -177,9 +185,11 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "allowed_asset"
+                        "symbol": "allowed_assets"
                       },
-                      "val": "void"
+                      "val": {
+                        "vec": []
+                      }
                     },
                     {
                       "key": {
@@ -232,10 +242,18 @@
                     },
                     {
                       "key": {
-                        "symbol": "whitelist_enabled"
+                        "symbol": "time_window_end"
                       },
                       "val": {
-                        "bool": false
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "time_window_start"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     }
                   ]
@@ -423,7 +441,15 @@
                   }
                 },
                 "void",
-                "void",
+                {
+                  "vec": []
+                },
+                {
+                  "u64": 0
+                },
+                {
+                  "u64": 0
+                },
                 {
                   "u64": 0
                 }

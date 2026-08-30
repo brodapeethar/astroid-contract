@@ -1,3 +1,5 @@
+use astroid_shared::errors::Error;
+
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     Address, BytesN, Env, IntoVal, String, Symbol, Val,
@@ -27,7 +29,9 @@ fn setup<'a>(env: &Env, owner: &Address) -> PolicyContractClient<'a> {
         &BytesN::from_array(env, &[42; 32]),
         &1_000_000,
         &None,
-        &None,
+        &soroban_sdk::vec![env],
+        &0,
+        &0,
         &0,
     );
     client
@@ -80,7 +84,9 @@ fn allowlist_recipient_enforced() {
         &BytesN::from_array(&env, &[7; 32]),
         &0,
         &Some(allowed.clone()),
-        &None,
+        &soroban_sdk::vec![&env],
+        &0,
+        &0,
         &0,
     );
 
@@ -249,6 +255,64 @@ fn disable_denies_everything() {
             &1,
         )
         .is_err());
+}
+
+#[test]
+fn test_asset_and_window_restrictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register_contract(None, PolicyContract);
+    let client = PolicyContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin);
+
+    let p_id = String::from_str(&env, "p2");
+    let asset1 = Address::generate(&env);
+    let asset2 = Address::generate(&env);
+
+    // time window: 100 to 200
+    client.register_policy(
+        &admin,
+        &p_id,
+        &BytesN::from_array(&env, &[0; 32]),
+        &0,
+        &None,
+        &soroban_sdk::vec![&env, asset1.clone()],
+        &100,
+        &200,
+        &0,
+    );
+
+    let recipient = Address::generate(&env);
+
+    // Too early
+    env.ledger().set_timestamp(50);
+    assert_eq!(
+        client.try_check_transfer(&p_id, &asset1, &recipient, &100),
+        Err(Ok(Error::PolicyDenied))
+    );
+
+    // Too late
+    env.ledger().set_timestamp(250);
+    assert_eq!(
+        client.try_check_transfer(&p_id, &asset1, &recipient, &100),
+        Err(Ok(Error::PolicyDenied))
+    );
+
+    // In window, but wrong asset
+    env.ledger().set_timestamp(150);
+    assert_eq!(
+        client.try_check_transfer(&p_id, &asset2, &recipient, &100),
+        Err(Ok(Error::AssetNotWhitelisted))
+    );
+
+    // Correct asset and in window
+    assert_eq!(
+        client.try_check_transfer(&p_id, &asset1, &recipient, &100),
+        Ok(Ok(()))
+    );
 }
 
 #[test]
